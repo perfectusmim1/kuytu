@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
+import { Check, Download, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { InviteLink } from "./Dialogs";
 import { Avatar, ConfirmButton, Dialog, Segmented, Switch } from "./ui";
@@ -199,6 +199,78 @@ function DeleteAccount({ me, onDeleted }: { me: Me; onDeleted: () => void }) {
         </button>
       </div>
     </form>
+  );
+}
+
+function AppUpdateSection() {
+  const currentVersion = "v1.0.1";
+  const [latestTag, setLatestTag] = useState<string | null>(null);
+  const [apkUrl, setApkUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("https://api.github.com/repos/perfectusmim1/kuytu/releases/latest")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data) return;
+        setLatestTag(data.tag_name || null);
+        const apkAsset = data.assets?.find(
+          (a: { name?: string; browser_download_url?: string }) => a.name?.endsWith(".apk")
+        );
+        if (apkAsset?.browser_download_url) {
+          setApkUrl(apkAsset.browser_download_url);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const hasUpdate = Boolean(latestTag && latestTag !== currentVersion);
+
+  return (
+    <Section title="Uygulama & Güncellemeler">
+      <div className="grid gap-2 text-sm">
+        <div className="flex items-center justify-between py-1">
+          <span className="text-muted">Mevcut sürüm</span>
+          <span className="font-mono text-xs text-ink/90">{currentVersion}</span>
+        </div>
+        {hasUpdate ? (
+          <div className="rounded-xl border border-accent/40 bg-accent/10 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-medium text-accent">Yeni sürüm yayınlandı</div>
+                <div className="truncate text-xs text-muted">{latestTag}</div>
+              </div>
+              <a
+                href={apkUrl || `https://github.com/perfectusmim1/kuytu/releases/tag/${latestTag}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-sm shrink-0 bg-accent text-accent-fg"
+              >
+                <Download size={14} aria-hidden />
+                Güncelle
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between py-1">
+            <span className="text-muted">Durum</span>
+            <span className="text-xs text-emerald-400">En güncel sürüm</span>
+          </div>
+        )}
+        <a
+          href={apkUrl || "https://github.com/perfectusmim1/kuytu/releases/latest/download/kuytu.apk"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-quiet w-full justify-center"
+        >
+          <Download size={15} aria-hidden />
+          Android APK’sını İndir
+        </a>
+      </div>
+    </Section>
   );
 }
 
@@ -483,6 +555,8 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
           />
         </div>
       </Section>
+
+      <AppUpdateSection />
 
       <Section title="Hesap">
         <div className="grid gap-2">
