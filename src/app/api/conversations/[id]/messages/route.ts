@@ -120,13 +120,30 @@ export async function POST(req: Request, ctx: Ctx) {
   return json({ message: toWire(row) }, 201);
 }
 
-/** "Delete for everyone": the ciphertext is erased, a tombstone remains. */
+/** "Delete for everyone" or burn-after-reading: erases the message from the server. */
 export async function DELETE(req: Request, ctx: Ctx) {
   const auth = await getAuth(req);
   if (!auth) return UNAUTHORIZED();
   const { id } = await ctx.params;
-  const messageId = searchParams(req).get("messageId");
+  const sp = searchParams(req);
+  const messageId = sp.get("messageId");
+  const burn = sp.get("burn") === "1";
   if (!isUuid(id) || !isUuid(messageId)) return fail(404, "Mesaj bulunamadı.");
+
+  const conv = await findConversation(id, auth.user.id);
+  if (!conv) return fail(404, MISSING);
+
+  if (burn) {
+    // Ephemeral / View-Once self-destruct: completely remove row from DB for both participants.
+    await db
+      .delete(messages)
+      .where(and(eq(messages.id, messageId.toLowerCase()), eq(messages.conversationId, id)));
+    await db
+      .update(conversations)
+      .set({ rev: sql`${conversations.rev} + 1` })
+      .where(eq(conversations.id, id));
+    return json({ ok: true });
+  }
 
   const updated = await db
     .update(messages)

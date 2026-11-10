@@ -60,7 +60,7 @@ export type ReplyRef = {
 
 /** The decrypted content of a message. Never leaves the device unencrypted. */
 export type Payload =
-  | { t: "text"; body: string; reply?: ReplyRef; forwarded?: boolean }
+  | { t: "text"; body: string; reply?: ReplyRef; forwarded?: boolean; ttl?: number }
   | {
       t: "image";
       url: string;
@@ -69,8 +69,10 @@ export type Payload =
       enc?: { k: string; iv: string; mime: string };
       reply?: ReplyRef;
       forwarded?: boolean;
+      ttl?: number;
+      once?: boolean;
     }
-  | { t: "gif"; url: string; w: number; h: number; reply?: ReplyRef; forwarded?: boolean }
+  | { t: "gif"; url: string; w: number; h: number; reply?: ReplyRef; forwarded?: boolean; ttl?: number }
   | { t: "react"; targetId: string; emoji: string };
 
 export type ChatMessage = {

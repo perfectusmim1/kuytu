@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Eraser,
   Heart,
+  Lock,
   MailOpen,
   MailWarning,
   Pin,
@@ -23,6 +24,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Avatar, Dialog, Wordmark } from "./ui";
 import { cx, errText, listTime } from "@/lib/format";
+import { readPinConfig, setPinLockedState } from "@/lib/pinLock";
 import type { ConvSummary, Me } from "@/lib/types";
 import type { Chat } from "@/lib/useChat";
 
@@ -165,6 +167,14 @@ export default function Sidebar({
   const [tab, setTab] = useState<"chats" | "favorites" | "requests" | "archived">("chats");
   const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [hasPin, setHasPin] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setHasPin(Boolean(readPinConfig()));
+    sync();
+    window.addEventListener("kuytu:pin-changed", sync);
+    return () => window.removeEventListener("kuytu:pin-changed", sync);
+  }, []);
   const [confirmAction, setConfirmAction] = useState<{
     mode: "clear" | "block" | "delete";
     conv: ConvSummary;
@@ -249,6 +259,20 @@ export default function Sidebar({
       <header className="flex items-center justify-between gap-2 pl-5 pr-2 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <Wordmark className="text-[2rem] leading-none" />
         <div className="flex items-center">
+          {hasPin ? (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => {
+                setPinLockedState(true);
+                window.dispatchEvent(new CustomEvent("kuytu:lock-now"));
+              }}
+              aria-label="Uygulamayı kilitle"
+              title="Şimdi kilitle (Ctrl+L)"
+            >
+              <Lock size={19} />
+            </button>
+          ) : null}
           <button type="button" className="icon-btn" onClick={onNew} aria-label="Yeni sohbet">
             <SquarePen size={20} />
           </button>

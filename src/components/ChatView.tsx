@@ -14,6 +14,7 @@ import {
   EllipsisVertical,
   Eraser,
   ExternalLink,
+  Flame,
   ImagePlus,
   Info,
   LockKeyhole,
@@ -25,6 +26,7 @@ import {
   ShieldCheck,
   SquareCheck,
   Star,
+  Timer,
   Trash2,
   X,
 } from "lucide-react";
@@ -32,6 +34,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import GifPicker from "./GifPicker";
 import { MessageRow } from "./Message";
 import { Avatar, ConfirmButton, Dialog } from "./ui";
+import { copySecureText } from "@/lib/clipboard";
 import { parseEmbed, previewOf, splitText } from "@/lib/embeds";
 import { cx, dayKey, dayLabel, errText, lastSeen } from "@/lib/format";
 import type { Prefs } from "@/lib/prefs";
@@ -57,6 +60,13 @@ type Props = {
   onToast: (message: string) => void;
 };
 
+const TTL_CYCLE: Array<{ sec: number | undefined; label: string }> = [
+  { sec: undefined, label: "Kapalı" },
+  { sec: 10, label: "10s" },
+  { sec: 60, label: "1dk" },
+  { sec: 300, label: "5dk" },
+];
+
 function Composer({
   convId,
   meId,
@@ -80,9 +90,12 @@ function Composer({
 }) {
   const [text, setText] = useState(() => drafts.get(convId) ?? "");
   const [gifOpen, setGifOpen] = useState(false);
+  const [ttlIdx, setTtlIdx] = useState(0);
+  const [oncePhoto, setOncePhoto] = useState(false);
   const closeGifs = useCallback(() => setGifOpen(false), []);
   const area = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const currentTtl = TTL_CYCLE[ttlIdx]?.sec;
 
   useEffect(() => {
     const el = area.current;
@@ -112,7 +125,7 @@ function Composer({
   const submit = () => {
     const body = text.trim();
     if (!body) return;
-    chat.sendText(convId, body.slice(0, 4000), buildReplyRef());
+    chat.sendText(convId, body.slice(0, 4000), buildReplyRef(), false, currentTtl);
     setText("");
     drafts.delete(convId);
     onClearReply();
@@ -123,13 +136,26 @@ function Composer({
   const attach = async (file: File | null | undefined) => {
     if (!file) return;
     const ref = buildReplyRef();
+    const isOnce = oncePhoto;
     try {
       onClearReply();
+      setOncePhoto(false);
       onSent();
-      await chat.sendImage(convId, file, ref);
+      await chat.sendImage(convId, file, ref, { ttl: currentTtl, once: isOnce });
     } catch (e) {
       onToast(errText(e));
     }
+  };
+
+  const cycleTtl = () => {
+    const nextIdx = (ttlIdx + 1) % TTL_CYCLE.length;
+    setTtlIdx(nextIdx);
+    const item = TTL_CYCLE[nextIdx];
+    onToast(
+      item.sec
+        ? `Süreli mesaj aktif: Okunduktan ${item.label} sonra imha edilir.`
+        : "Süreli mesaj kapatıldı.",
+    );
   };
 
   return (
@@ -138,7 +164,7 @@ function Composer({
         <GifPicker
           enabled={chat.features.gifs}
           onPick={(g) => {
-            chat.sendGif(convId, g, buildReplyRef());
+            chat.sendGif(convId, g, buildReplyRef(), false, currentTtl);
             setGifOpen(false);
             onClearReply();
             onSent();
@@ -179,17 +205,66 @@ function Composer({
             e.target.value = "";
           }}
         />
-        <button type="button" className="icon-btn" onClick={() => picker.current?.click()} aria-label="Fotoğraf gönder">
+        <button
+          type="button"
+          className={cx("icon-btn relative", oncePhoto && "bg-accent-soft text-accent")}
+          onClick={() => picker.current?.click()}
+          aria-label="Fotoğraf gönder"
+          title={oncePhoto ? "Tek açımlık fotoğraf seç" : "Fotoğraf gönder"}
+        >
           <ImagePlus size={21} />
+          {oncePhoto ? (
+            <span className="absolute -right-0.5 -top-0.5 rounded-full bg-accent px-1 text-[9px] font-bold text-accent-ink">
+              1x
+            </span>
+          ) : null}
         </button>
         <button
           type="button"
-          className={cx("icon-btn text-[13px] font-bold tracking-wide", gifOpen && "bg-sunken text-ink")}
+          onClick={() => {
+            const next = !oncePhoto;
+            setOncePhoto(next);
+            onToast(
+              next
+                ? "Tek açımlık fotoğraf modu aktif: Göndereceğin fotoğraf görüntülendiği an imha edilir."
+                : "Tek açımlık fotoğraf modu kapatıldı.",
+            );
+          }}
+          aria-label="Tek açımlık fotoğraf modu"
+          aria-pressed={oncePhoto}
+          title="Tek açımlık fotoğraf (1x)"
+          className={cx(
+            "icon-btn w-9 text-[12px] font-bold tracking-tight",
+            oncePhoto && "bg-accent-soft text-accent ring-1 ring-accent/40",
+          )}
+        >
+          1x
+        </button>
+        <button
+          type="button"
+          className={cx("icon-btn w-10 text-[12.5px] font-bold tracking-wide", gifOpen && "bg-sunken text-ink")}
           onClick={() => setGifOpen((v) => !v)}
           aria-label="GIF gönder"
           aria-expanded={gifOpen}
         >
           GIF
+        </button>
+        <button
+          type="button"
+          onClick={cycleTtl}
+          aria-label="Süreli kendini imha eden mesaj"
+          title="Süreli mesaj (Okunduktan sonra imha et)"
+          className={cx(
+            "icon-btn relative w-10",
+            Boolean(currentTtl) && "bg-accent-soft text-accent ring-1 ring-accent/40",
+          )}
+        >
+          {currentTtl ? <Flame size={18} /> : <Timer size={19} />}
+          {currentTtl ? (
+            <span className="absolute -bottom-0.5 right-0.5 rounded bg-accent px-1 text-[9px] font-bold leading-tight text-accent-ink">
+              {TTL_CYCLE[ttlIdx].label}
+            </span>
+          ) : null}
         </button>
         <textarea
           ref={area}
@@ -482,12 +557,19 @@ export default function ChatView({
 
   const handleCopyText = useCallback(
     (text: string) => {
-      navigator.clipboard
-        ?.writeText(text)
-        .then(() => onToast("Mesaj kopyalandı."))
-        .catch(() => onToast("Kopyalanamadı."));
+      copySecureText(text, prefs.autoClearClipboard).then((ok) => {
+        if (ok) {
+          onToast(
+            prefs.autoClearClipboard
+              ? "Mesaj kopyalandı (30 sn sonra pano temizlenir)."
+              : "Mesaj kopyalandı.",
+          );
+        } else {
+          onToast("Kopyalanamadı.");
+        }
+      });
     },
-    [onToast],
+    [onToast, prefs.autoClearClipboard],
   );
 
   const handleOpenForward = useCallback(
@@ -511,6 +593,10 @@ export default function ChatView({
 
   const handleDiscard = useCallback((cId: string, id: string) => {
     chatRef.current.discard(cId, id);
+  }, []);
+
+  const handleBurn = useCallback((cId: string, id: string) => {
+    chatRef.current.burnMessage(cId, id);
   }, []);
 
   // Multi-select bulk actions
@@ -540,19 +626,30 @@ export default function ChatView({
 
   const handleBulkCopy = () => {
     const texts = selectedMessages
+      .filter((m) => {
+        const p = m.payload;
+        if (!p || m.deleted || p.t === "react") return false;
+        if (p.ttl || (p.t === "image" && p.once)) return false;
+        return true;
+      })
       .map((m) => (m.payload?.t === "text" ? m.payload.body : m.payload?.t === "gif" ? m.payload.url : ""))
       .filter(Boolean);
     if (!texts.length) {
       onToast("Kopyalanacak metin bulunamadı.");
       return;
     }
-    navigator.clipboard
-      ?.writeText(texts.join("\n\n"))
-      .then(() => {
-        onToast(`${texts.length} mesaj kopyalandı.`);
+    copySecureText(texts.join("\n\n"), prefs.autoClearClipboard).then((ok) => {
+      if (ok) {
+        onToast(
+          prefs.autoClearClipboard
+            ? `${texts.length} mesaj kopyalandı (30 sn sonra pano temizlenir).`
+            : `${texts.length} mesaj kopyalandı.`,
+        );
         exitSelectMode();
-      })
-      .catch(() => onToast("Kopyalanamadı."));
+      } else {
+        onToast("Kopyalanamadı.");
+      }
+    });
   };
 
   const handleBulkStar = () => {
@@ -985,6 +1082,7 @@ export default function ChatView({
                   selectMode={selectMode}
                   selected={selectedIds.has(r.m.id)}
                   autoEmbeds={prefs.autoEmbeds}
+                  blurMedia={prefs.blurMedia}
                   dark={dark}
                   onToggleSelect={toggleSelect}
                   onStartSelect={startSelectWith}
@@ -994,6 +1092,7 @@ export default function ChatView({
                   onToggleStar={handleToggleStar}
                   onTogglePin={handleTogglePin}
                   onPromptDelete={handlePromptDelete}
+                  onBurn={handleBurn}
                   onCopyText={handleCopyText}
                   onJump={jumpToMessage}
                   onRetry={handleRetry}

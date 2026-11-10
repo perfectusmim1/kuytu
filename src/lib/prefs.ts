@@ -11,6 +11,10 @@ export type Prefs = {
   sound: boolean;
   enterSends: boolean;
   mediaHost: "vault" | "imgur";
+  blurMedia: boolean;
+  autoClearClipboard: boolean;
+  autoLockMinutes: 0 | 1 | 3 | 5 | 15;
+  lockOnHide: boolean;
 };
 
 export const DEFAULT_PREFS: Prefs = {
@@ -21,6 +25,10 @@ export const DEFAULT_PREFS: Prefs = {
   sound: true,
   enterSends: true,
   mediaHost: "vault",
+  blurMedia: false,
+  autoClearClipboard: true,
+  autoLockMinutes: 1,
+  lockOnHide: false,
 };
 
 const KEY = "kuytu:prefs";

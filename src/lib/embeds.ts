@@ -202,8 +202,11 @@ export function splitText(text: string): TextPart[] {
 /** One-line summary for the conversation list and notifications. */
 export function previewOf(p: Payload): string {
   if (p.t === "react") return p.emoji ? `${p.emoji} ifadeyle yanıtladı` : "İfade kaldırıldı";
-  if (p.t === "image") return "Fotoğraf";
-  if (p.t === "gif") return "GIF";
+  if (p.t === "image") {
+    if (p.once) return "Tek açımlık fotoğraf";
+    return p.ttl ? "Süreli fotoğraf" : "Fotoğraf";
+  }
+  if (p.t === "gif") return p.ttl ? "Süreli GIF" : "GIF";
   const body = p.body.trim();
   if (/^https?:\/\/\S+$/i.test(body)) {
     const e = parseEmbed(body);
@@ -214,6 +217,7 @@ export function previewOf(p: Payload): string {
 
 const SAFE_MIME = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const ALLOWED_REACTIONS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏", ""]);
+const ALLOWED_TTLS = new Set([5, 10, 30, 60, 300, 3600]);
 
 function normalizeReply(r: unknown): ReplyRef | undefined {
   if (!r || typeof r !== "object") return undefined;
@@ -236,6 +240,8 @@ export function normalizePayload(x: unknown): Payload | null {
     typeof v === "number" && Number.isFinite(v) && v >= 1 && v <= 20000 ? Math.round(v) : fallback;
   const reply = normalizeReply(o.reply);
   const forwarded = o.forwarded === true ? true : undefined;
+  const ttl = typeof o.ttl === "number" && ALLOWED_TTLS.has(o.ttl) ? o.ttl : undefined;
+  const once = o.once === true ? true : undefined;
 
   if (o.t === "react" && typeof o.targetId === "string" && typeof o.emoji === "string") {
     if (!/^[0-9a-f-]{36}$/i.test(o.targetId)) return null;
@@ -250,6 +256,7 @@ export function normalizePayload(x: unknown): Payload | null {
       body: o.body.slice(0, 8000),
       ...(reply ? { reply } : {}),
       ...(forwarded ? { forwarded } : {}),
+      ...(ttl ? { ttl } : {}),
     };
   }
 
@@ -262,12 +269,14 @@ export function normalizePayload(x: unknown): Payload | null {
           h: dim(o.h, 180),
           ...(reply ? { reply } : {}),
           ...(forwarded ? { forwarded } : {}),
+          ...(ttl ? { ttl } : {}),
         }
       : {
           t: "text",
           body: o.url.slice(0, 2000),
           ...(reply ? { reply } : {}),
           ...(forwarded ? { forwarded } : {}),
+          ...(ttl ? { ttl } : {}),
         };
   }
 
@@ -285,6 +294,8 @@ export function normalizePayload(x: unknown): Payload | null {
         enc: { k: enc.k, iv: enc.iv, mime },
         ...(reply ? { reply } : {}),
         ...(forwarded ? { forwarded } : {}),
+        ...(ttl ? { ttl } : {}),
+        ...(once ? { once } : {}),
       };
     }
     if (!enc && isImgurUrl(o.url)) {
@@ -295,6 +306,8 @@ export function normalizePayload(x: unknown): Payload | null {
         h,
         ...(reply ? { reply } : {}),
         ...(forwarded ? { forwarded } : {}),
+        ...(ttl ? { ttl } : {}),
+        ...(once ? { once } : {}),
       };
     }
     return {
@@ -302,6 +315,7 @@ export function normalizePayload(x: unknown): Payload | null {
       body: o.url.slice(0, 2000),
       ...(reply ? { reply } : {}),
       ...(forwarded ? { forwarded } : {}),
+      ...(ttl ? { ttl } : {}),
     };
   }
   return null;

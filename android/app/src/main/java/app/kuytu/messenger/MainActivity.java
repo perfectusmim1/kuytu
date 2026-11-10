@@ -296,9 +296,9 @@ public class MainActivity extends BridgeActivity {
         public String getVersionName() {
             try {
                 PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
-                return info.versionName != null ? info.versionName : "1.0.4";
+                return info.versionName != null ? info.versionName : "1.0.5";
             } catch (Exception e) {
-                return "1.0.4";
+                return "1.0.5";
             }
         }
 

@@ -3,6 +3,7 @@
 import { Check, Download, LoaderCircle, LogOut, Monitor, Moon, RefreshCw, Sun } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { InviteLink } from "./Dialogs";
+import { PinSecurityControls } from "./PinLock";
 import { Avatar, ConfirmButton, Dialog, Segmented, Switch } from "./ui";
 import { deriveCredentials, rewrapIdentity } from "@/lib/crypto";
 import { cx, errText } from "@/lib/format";
@@ -216,7 +217,7 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
     (Boolean((window as unknown as { Capacitor?: unknown }).Capacitor) || /\bwv\b/i.test(navigator.userAgent));
   const isApp = Boolean(android || isLegacyApk);
 
-  const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.4");
+  const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.5");
   const currentVersion = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
 
   const [latestTag, setLatestTag] = useState<string | null>(null);
@@ -553,6 +554,18 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
             checked={prefs.autoEmbeds}
             onChange={(v) => setPrefs({ autoEmbeds: v })}
           />
+          <Switch
+            label="Medyaları dokunana kadar bulanıklaştır"
+            hint="Sohbetteki tüm fotoğraf ve GIF’ler sen üzerine dokunana kadar buzlu görünür."
+            checked={prefs.blurMedia}
+            onChange={(v) => setPrefs({ blurMedia: v })}
+          />
+          <Switch
+            label="Kopyalanan metinleri 30 sn sonra panodan sil"
+            hint="Kopyaladığın mesaj veya davet bağlantıları 30 saniye sonra cihaz panosundan otomatik temizlenir."
+            checked={prefs.autoClearClipboard}
+            onChange={(v) => setPrefs({ autoClearClipboard: v })}
+          />
         </div>
       </Section>
 
@@ -668,7 +681,16 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
       </Section>
 
       <Section title="Güvenlik">
-        <div className="grid gap-2">
+        <div className="grid gap-2.5">
+          <PinSecurityControls
+            prefs={prefs}
+            setPrefs={setPrefs}
+            onLockNow={() => {
+              onClose();
+              window.dispatchEvent(new CustomEvent("kuytu:lock-now"));
+            }}
+            onToast={onToast}
+          />
           <PasswordForm me={me} onToast={onToast} />
           <ConfirmButton
             className="btn btn-quiet w-full"

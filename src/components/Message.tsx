@@ -10,6 +10,9 @@ import {
   CornerUpRight,
   Ellipsis,
   ExternalLink,
+  Eye,
+  EyeOff,
+  Flame,
   ImageOff,
   LoaderCircle,
   LockKeyhole,
@@ -59,6 +62,7 @@ export type RowProps = {
   selectMode: boolean;
   selected: boolean;
   autoEmbeds: boolean;
+  blurMedia: boolean;
   dark: boolean;
   onToggleSelect: (id: string) => void;
   onStartSelect: (id: string) => void;
@@ -68,6 +72,7 @@ export type RowProps = {
   onToggleStar: (id: string) => void;
   onTogglePin: (id: string) => void;
   onPromptDelete: (ids: string[]) => void;
+  onBurn: (convId: string, id: string) => void;
   onCopyText: (text: string) => void;
   onJump: (id: string) => void;
   onRetry: (id: string) => void;
@@ -85,22 +90,41 @@ try {
   EMOJI_ONLY = null;
 }
 
+const seenAtMap = new Map<string, number>();
+
+function formatTtl(sec: number): string {
+  if (sec >= 60) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s > 0 ? `${m}d ${s}s` : `${m}dk`;
+  }
+  return `${Math.max(1, sec)}s`;
+}
+
 function Meta({
   m,
   receipt,
   starred,
   pinned,
+  ttlRemaining,
   tone,
 }: {
   m: ChatMessage;
   receipt: Receipt;
   starred?: boolean;
   pinned?: boolean;
+  ttlRemaining?: number | null;
   tone: "own" | "peer" | "overlay";
 }) {
   const color = tone === "own" ? "text-own-muted" : tone === "peer" ? "text-muted" : "text-white";
   return (
     <span className={cx("flex select-none items-center gap-1 whitespace-nowrap text-[11px] leading-none", color)}>
+      {typeof ttlRemaining === "number" && ttlRemaining > 0 ? (
+        <span className="flex items-center gap-0.5 font-semibold text-[#ff8a57]" title="Kendini imha eden mesaj">
+          <Flame size={11} className="fill-current" aria-hidden />
+          {formatTtl(ttlRemaining)}
+        </span>
+      ) : null}
       {pinned ? <Pin size={10} className="rotate-45 opacity-85" aria-label="Sabitlendi" /> : null}
       {starred ? <Star size={10} className="fill-current opacity-85" aria-label="Yıldızlı" /> : null}
       {clock(m.createdAt)}
@@ -180,21 +204,32 @@ function MediaFrame({ w, h, max, children }: { w: number; h: number; max: number
 function ImageBlock({
   m,
   p,
+  mine,
   receipt,
   starred,
   pinned,
+  ttlRemaining,
+  blurMedia,
+  onBurn,
   onImage,
 }: {
   m: ChatMessage;
   p: Extract<Payload, { t: "image" }>;
+  mine: boolean;
   receipt: Receipt;
   starred: boolean;
   pinned: boolean;
+  ttlRemaining: number | null;
+  blurMedia: boolean;
+  onBurn: () => void;
   onImage: (src: string) => void;
 }) {
   const [src, setSrc] = useState<string | null>(m.localUrl ?? null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [revealed, setRevealed] = useState(false);
+  const [holdingOnce, setHoldingOnce] = useState(false);
+  const hadHoldRef = useRef(false);
   const k = p.enc?.k;
   const iv = p.enc?.iv;
   const mime = p.enc?.mime;
@@ -222,6 +257,88 @@ function ImageBlock({
     };
   }, [m.localUrl, p.url, k, iv, mime, attempt]);
 
+  if (p.once) {
+    const finishHold = () => {
+      if (!hadHoldRef.current) return;
+      hadHoldRef.current = false;
+      setHoldingOnce(false);
+      if (!mine && !m.state) {
+        onBurn();
+      }
+    };
+
+    return (
+      <>
+        <div
+          onPointerDown={(e) => {
+            if (mine || !src || m.state) return;
+            e.stopPropagation();
+            hadHoldRef.current = true;
+            setHoldingOnce(true);
+          }}
+          onPointerUp={finishHold}
+          onPointerCancel={finishHold}
+          onPointerLeave={finishHold}
+          className={cx(
+            "relative flex min-w-[220px] max-w-[280px] select-none items-center gap-3 rounded-[20px] border px-3.5 py-3 text-left transition-colors",
+            mine
+              ? "border-[#3d3128] bg-own text-own-ink"
+              : "cursor-pointer border-accent/45 bg-raised text-ink active:scale-[0.98]",
+          )}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+            <Flame size={19} aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1 pr-2">
+            <p className="truncate text-sm font-semibold">Tek Açımlık Fotoğraf</p>
+            <p className={cx("mt-0.5 text-xs leading-snug", mine ? "text-own-muted" : "text-muted")}>
+              {m.state === "sending"
+                ? "Şifrelenip gönderiliyor…"
+                : error
+                  ? "Fotoğraf yüklenemedi"
+                  : mine
+                    ? "Alıcı görüntülediğinde imha edilir"
+                    : src
+                      ? "Görmek için basılı tut"
+                      : "Şifresi çözülüyor…"}
+            </p>
+            <div className="mt-1.5 flex justify-end">
+              <Meta
+                m={m}
+                receipt={receipt}
+                starred={starred}
+                pinned={pinned}
+                ttlRemaining={ttlRemaining}
+                tone={mine ? "own" : "peer"}
+              />
+            </div>
+          </div>
+        </div>
+
+        {holdingOnce && src ? (
+          <div
+            onPointerUp={finishHold}
+            onPointerCancel={finishHold}
+            className="fixed inset-0 z-[9990] flex flex-col items-center justify-center bg-black/95 p-4 select-none"
+          >
+            <span className="mb-3 flex items-center gap-1.5 rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-ink">
+              <Flame size={13} aria-hidden />
+              Bıraktığında bu fotoğraf kalıcı olarak imha edilecek
+            </span>
+            <ProtectedImage
+              src={src}
+              alt="Tek açımlık fotoğraf"
+              fit="contain"
+              className="max-h-[82dvh] max-w-[92vw] rounded-2xl"
+            />
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  const isBlurred = blurMedia && !revealed;
+
   return (
     <MediaFrame w={p.w} h={p.h} max={280}>
       {error ? (
@@ -246,17 +363,40 @@ function ImageBlock({
           className="absolute inset-0 block h-full w-full cursor-zoom-in"
           onClick={(e) => {
             e.stopPropagation();
+            if (isBlurred) {
+              setRevealed(true);
+              return;
+            }
             onImage(src);
           }}
-          aria-label="Fotoğrafı büyüt"
+          aria-label={isBlurred ? "Fotoğrafı göster" : "Fotoğrafı büyüt"}
         >
           <ProtectedImage
             src={src}
             alt="Gönderilen fotoğraf"
-            className="h-full w-full"
+            className={cx("h-full w-full transition-all duration-200", isBlurred && "scale-110 blur-xl brightness-75")}
             fit="cover"
             onError={() => setError(true)}
           />
+          {isBlurred ? (
+            <span className=" absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/35 text-xs font-semibold text-white">
+              <Eye size={20} aria-hidden />
+              Görmek için dokun
+            </span>
+          ) : blurMedia && revealed ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                setRevealed(false);
+              }}
+              aria-label="Fotoğrafı gizle"
+              className="absolute left-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white hover:bg-black/80"
+            >
+              <EyeOff size={14} />
+            </span>
+          ) : null}
         </button>
       ) : (
         <div className="skeleton absolute inset-0" aria-label="Fotoğraf çözülüyor" />
@@ -270,7 +410,7 @@ function ImageBlock({
         </div>
       ) : null}
       <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/55 px-2 py-1">
-        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} ttlRemaining={ttlRemaining} tone="overlay" />
       </span>
     </MediaFrame>
   );
@@ -282,19 +422,24 @@ function GifBlock({
   receipt,
   starred,
   pinned,
+  ttlRemaining,
   auto,
+  blurMedia,
 }: {
   m: ChatMessage;
   p: Extract<Payload, { t: "gif" }>;
   receipt: Receipt;
   starred: boolean;
   pinned: boolean;
+  ttlRemaining: number | null;
   auto: boolean;
+  blurMedia: boolean;
 }) {
-  const [armed, setArmed] = useState(auto);
+  const [armed, setArmed] = useState(auto && !blurMedia);
   useEffect(() => {
-    if (auto) setArmed(true);
-  }, [auto]);
+    if (auto && !blurMedia) setArmed(true);
+    if (blurMedia) setArmed(false);
+  }, [auto, blurMedia]);
 
   return (
     <MediaFrame w={p.w} h={p.h} max={260}>
@@ -309,6 +454,7 @@ function GifBlock({
           }}
           className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-sm font-semibold"
         >
+          <Eye size={18} aria-hidden />
           GIF’i göster
           <span className="text-xs font-normal text-muted">GIPHY’den yüklenir</span>
         </button>
@@ -317,7 +463,7 @@ function GifBlock({
         GIF
       </span>
       <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/55 px-2 py-1">
-        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} ttlRemaining={ttlRemaining} tone="overlay" />
       </span>
     </MediaFrame>
   );
@@ -377,7 +523,9 @@ function TextBlock({
   receipt,
   starred,
   pinned,
+  ttlRemaining,
   autoEmbeds,
+  blurMedia,
   dark,
   onJump,
   onImage,
@@ -393,7 +541,9 @@ function TextBlock({
   receipt: Receipt;
   starred: boolean;
   pinned: boolean;
+  ttlRemaining: number | null;
   autoEmbeds: boolean;
+  blurMedia: boolean;
   dark: boolean;
   onJump: (id: string) => void;
   onImage: (src: string) => void;
@@ -433,7 +583,7 @@ function TextBlock({
       <>
         <span className="text-[42px] leading-tight">{body.trim()}</span>
         <span className="px-1">
-          <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="peer" />
+          <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} ttlRemaining={ttlRemaining} tone="peer" />
         </span>
       </>
     );
@@ -441,8 +591,14 @@ function TextBlock({
 
   const hasEmbed = embeds.length > 0;
   const hasBubbleContent = hasVisibleText || Boolean(reply) || Boolean(forwarded);
-  const metaPadWidth = (mine ? 56 : 38) + (starred ? 14 : 0) + (pinned ? 14 : 0);
-  const standaloneMeta = <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="peer" />;
+  const metaPadWidth =
+    (mine ? 56 : 38) +
+    (starred ? 14 : 0) +
+    (pinned ? 14 : 0) +
+    (typeof ttlRemaining === "number" && ttlRemaining > 0 ? 38 : 0);
+  const standaloneMeta = (
+    <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} ttlRemaining={ttlRemaining} tone="peer" />
+  );
 
   return (
     <div className={cx("flex max-w-full flex-col gap-1.5", mine ? "items-end" : "items-start")}>
@@ -485,14 +641,28 @@ function TextBlock({
                 <>
                   <span className="inline-block h-3" style={{ width: metaPadWidth }} aria-hidden />
                   <span className="absolute bottom-2 right-3">
-                    <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+                    <Meta
+                      m={m}
+                      receipt={receipt}
+                      starred={starred}
+                      pinned={pinned}
+                      ttlRemaining={ttlRemaining}
+                      tone={mine ? "own" : "peer"}
+                    />
                   </span>
                 </>
               ) : null}
             </>
           ) : !hasEmbed ? (
             <div className="mt-1 flex justify-end">
-              <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+              <Meta
+                m={m}
+                receipt={receipt}
+                starred={starred}
+                pinned={pinned}
+                ttlRemaining={ttlRemaining}
+                tone={mine ? "own" : "peer"}
+              />
             </div>
           ) : null}
         </div>
@@ -504,10 +674,17 @@ function TextBlock({
             const isLast = idx === embeds.length - 1;
             return e.kind === "image" ? (
               <div key={e.url} className="relative">
-                <LinkImage src={e.src} auto={autoEmbeds} onImage={onImage} />
+                <LinkImage src={e.src} auto={autoEmbeds && !blurMedia} onImage={onImage} />
                 {isLast ? (
                   <span className="pointer-events-none absolute bottom-3.5 right-2 rounded-full bg-black/55 px-2 py-1">
-                    <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+                    <Meta
+                      m={m}
+                      receipt={receipt}
+                      starred={starred}
+                      pinned={pinned}
+                      ttlRemaining={ttlRemaining}
+                      tone="overlay"
+                    />
                   </span>
                 ) : null}
               </div>
@@ -862,6 +1039,7 @@ export const MessageRow = memo(function MessageRow({
   selectMode,
   selected,
   autoEmbeds,
+  blurMedia,
   dark,
   onToggleSelect,
   onStartSelect,
@@ -871,6 +1049,7 @@ export const MessageRow = memo(function MessageRow({
   onToggleStar,
   onTogglePin,
   onPromptDelete,
+  onBurn,
   onCopyText,
   onJump,
   onRetry,
@@ -884,8 +1063,42 @@ export const MessageRow = memo(function MessageRow({
   const closeMenu = useCallback(() => setMenuAnchor(null), []);
 
   const p = m.payload;
+  const ttlSec = p && p.t !== "react" && typeof p.ttl === "number" ? p.ttl : null;
+  const isViewOnce = Boolean(p && p.t === "image" && p.once);
+  const [ttlRemaining, setTtlRemaining] = useState<number | null>(ttlSec);
+
+  useEffect(() => {
+    if (!ttlSec || m.deleted || m.state) {
+      setTtlRemaining(null);
+      return;
+    }
+    const timerEligible = !mine || receipt === "seen";
+    if (!timerEligible) {
+      setTtlRemaining(ttlSec);
+      return;
+    }
+    let startAt = seenAtMap.get(m.id);
+    if (!startAt) {
+      startAt = Date.now();
+      seenAtMap.set(m.id, startAt);
+    }
+    const tick = () => {
+      const elapsedSec = Math.floor((Date.now() - startAt!) / 1000);
+      const rem = ttlSec - elapsedSec;
+      if (rem <= 0) {
+        setTtlRemaining(0);
+        onBurn(convId, m.id);
+      } else {
+        setTtlRemaining(rem);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 500);
+    return () => clearInterval(id);
+  }, [ttlSec, m.deleted, m.state, m.id, mine, receipt, convId, onBurn]);
+
   const copyableText =
-    !m.deleted && p
+    !m.deleted && p && !ttlSec && !isViewOnce
       ? p.t === "text"
         ? p.body
         : p.t === "gif"
@@ -908,7 +1121,7 @@ export const MessageRow = memo(function MessageRow({
     return null;
   }, [p, m.deleted]);
   const canReply = !m.deleted && Boolean(p) && !m.state;
-  const canForward = !m.deleted && Boolean(p) && !m.state && p?.t !== "react";
+  const canForward = !m.deleted && Boolean(p) && !m.state && p?.t !== "react" && !ttlSec && !isViewOnce;
   const myReaction = m.reactions?.[meId] ?? "";
 
   const clearTouch = () => {
@@ -1004,7 +1217,9 @@ export const MessageRow = memo(function MessageRow({
         receipt={receipt}
         starred={starred}
         pinned={pinned}
+        ttlRemaining={ttlRemaining}
         autoEmbeds={autoEmbeds}
+        blurMedia={blurMedia}
         dark={dark}
         onJump={onJump}
         onImage={onImage}
@@ -1017,7 +1232,18 @@ export const MessageRow = memo(function MessageRow({
         {p.reply ? (
           <ReplyQuote reply={p.reply} meId={meId} peerName={peerName} inOwnBubble={false} onJump={onJump} />
         ) : null}
-        <ImageBlock m={m} p={p} receipt={receipt} starred={starred} pinned={pinned} onImage={onImage} />
+        <ImageBlock
+          m={m}
+          p={p}
+          mine={mine}
+          receipt={receipt}
+          starred={starred}
+          pinned={pinned}
+          ttlRemaining={ttlRemaining}
+          blurMedia={blurMedia}
+          onBurn={() => onBurn(convId, m.id)}
+          onImage={onImage}
+        />
       </>
     );
   } else {
@@ -1027,7 +1253,16 @@ export const MessageRow = memo(function MessageRow({
         {p.reply ? (
           <ReplyQuote reply={p.reply} meId={meId} peerName={peerName} inOwnBubble={false} onJump={onJump} />
         ) : null}
-        <GifBlock m={m} p={p} receipt={receipt} starred={starred} pinned={pinned} auto={autoEmbeds} />
+        <GifBlock
+          m={m}
+          p={p}
+          receipt={receipt}
+          starred={starred}
+          pinned={pinned}
+          ttlRemaining={ttlRemaining}
+          auto={autoEmbeds}
+          blurMedia={blurMedia}
+        />
       </>
     );
   }

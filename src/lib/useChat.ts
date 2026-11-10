@@ -416,7 +416,7 @@ export function useChat(session: Session, prefs: Prefs) {
         const curRaw = rawMessagesRef.current[c.id] ?? [];
         const minSeq = list.length ? list[0].seq : Number.POSITIVE_INFINITY;
         const ids = new Set(list.map((m) => m.id));
-        const older = curRaw.filter((m) => !m.state && m.seq < minSeq);
+        const older = res.hasMore ? curRaw.filter((m) => !m.state && m.seq < minSeq) : [];
         const pending = curRaw.filter((m) => m.state && !ids.has(m.id));
         const combined = [...older, ...list, ...pending];
         const cur = threadsRef.current[c.id];
@@ -658,18 +658,19 @@ export function useChat(session: Session, prefs: Prefs) {
   );
 
   const sendText = useCallback(
-    (convId: string, body: string, reply?: ReplyRef, forwarded?: boolean) =>
+    (convId: string, body: string, reply?: ReplyRef, forwarded?: boolean, ttl?: number) =>
       enqueue(convId, {
         t: "text",
         body,
         ...(reply ? { reply } : {}),
         ...(forwarded ? { forwarded: true } : {}),
+        ...(ttl ? { ttl } : {}),
       }),
     [enqueue],
   );
 
   const sendGif = useCallback(
-    (convId: string, gif: { url: string; w: number; h: number }, reply?: ReplyRef, forwarded?: boolean) =>
+    (convId: string, gif: { url: string; w: number; h: number }, reply?: ReplyRef, forwarded?: boolean, ttl?: number) =>
       enqueue(convId, {
         t: "gif",
         url: gif.url,
@@ -677,19 +678,25 @@ export function useChat(session: Session, prefs: Prefs) {
         h: gif.h,
         ...(reply ? { reply } : {}),
         ...(forwarded ? { forwarded: true } : {}),
+        ...(ttl ? { ttl } : {}),
       }),
     [enqueue],
   );
 
   const sendImage = useCallback(
-    async (convId: string, file: File, reply?: ReplyRef) => {
+    async (convId: string, file: File, reply?: ReplyRef, opts?: { ttl?: number; once?: boolean }) => {
       const prepared = await prepareImage(file);
       const localUrl = registerLocalBlob(prepared.blob);
-      const viaImgur = prefsRef.current.mediaHost === "imgur" && featuresRef.current.imgur;
+      const viaImgur = prefsRef.current.mediaHost === "imgur" && featuresRef.current.imgur && !opts?.once && !opts?.ttl;
       const { w, h, mime, blob } = prepared;
+      const extra = {
+        ...(reply ? { reply } : {}),
+        ...(opts?.ttl ? { ttl: opts.ttl } : {}),
+        ...(opts?.once ? { once: true } : {}),
+      };
       enqueue(
         convId,
-        { t: "image", url: "", w, h, ...(reply ? { reply } : {}) },
+        { t: "image", url: "", w, h, ...extra },
         async () => {
           if (viaImgur) {
             const r = await api<{ url: string }>("/api/upload?host=imgur", {
@@ -698,7 +705,7 @@ export function useChat(session: Session, prefs: Prefs) {
               headers: { "Content-Type": mime },
             });
             rememberMedia(r.url, localUrl);
-            return { t: "image", url: r.url, w, h, ...(reply ? { reply } : {}) };
+            return { t: "image", url: r.url, w, h, ...extra };
           }
           const sealed = await encryptBytes(await blob.arrayBuffer());
           const r = await api<{ url: string }>("/api/upload", {
@@ -713,7 +720,7 @@ export function useChat(session: Session, prefs: Prefs) {
             w,
             h,
             enc: { k: sealed.k, iv: sealed.iv, mime },
-            ...(reply ? { reply } : {}),
+            ...extra,
           };
         },
         localUrl,
@@ -786,6 +793,25 @@ export function useChat(session: Session, prefs: Prefs) {
         curRaw.map((m) => (m.id === id ? { ...m, deleted: true, payload: null, reactions: undefined } : m)),
       );
       kick.current();
+    },
+    [rebuildVisibleThread],
+  );
+
+  /** Self-destruct / View-Once burn: removes message from server DB and local thread for both participants */
+  const burnMessage = useCallback(
+    (convId: string, id: string) => {
+      decryptedCache.current.delete(`${id}|0`);
+      decryptedCache.current.delete(`${id}|1`);
+      const curRaw = rawMessagesRef.current[convId] ?? [];
+      if (curRaw.some((m) => m.id === id)) {
+        rebuildVisibleThread(
+          convId,
+          curRaw.filter((m) => m.id !== id),
+        );
+      }
+      api(`/api/conversations/${convId}/messages?messageId=${id}&burn=1`, { method: "DELETE" })
+        .then(() => kick.current())
+        .catch(() => {});
     },
     [rebuildVisibleThread],
   );
@@ -1046,6 +1072,7 @@ export function useChat(session: Session, prefs: Prefs) {
     retry,
     discard,
     deleteMessage,
+    burnMessage,
     deleteForMe,
     clearLocal,
     toggleStar,

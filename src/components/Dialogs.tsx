@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Avatar, ConfirmButton, Dialog, ProtectedImage, Switch } from "./ui";
+import { copySecureText } from "@/lib/clipboard";
 import { safetyNumber } from "@/lib/crypto";
 import { previewOf, splitText } from "@/lib/embeds";
 import { clock, errText, lastSeen } from "@/lib/format";
@@ -32,10 +33,10 @@ export function InviteLink({ code, onToast }: { code: string; onToast: (message:
   const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      onToast("Bağlantı kopyalandı.");
-    } catch {
+    const ok = await copySecureText(url, true);
+    if (ok) {
+      onToast("Bağlantı kopyalandı (30 sn sonra pano temizlenir).");
+    } else {
       onToast("Kopyalanamadı. Bağlantıyı elle seçip kopyala.");
     }
   };
@@ -270,6 +271,8 @@ export function ConversationInfo({
       if (m.deleted || !m.payload) continue;
       if (starred[m.id]) starredItems.push(m);
       const p = m.payload;
+      if (p.t !== "react" && p.ttl) continue;
+      if (p.t === "image" && p.once) continue;
       if ((p.t === "image" || p.t === "gif") && (p.url || m.localUrl)) {
         mediaItems.push({ m, p });
       } else if (p.t === "text") {
