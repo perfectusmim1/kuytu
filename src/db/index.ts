@@ -43,7 +43,10 @@ o/bKiIz+Fq8=
 -----END CERTIFICATE-----`;
 
 function sslConfig(url: string): PoolConfig["ssl"] {
-  const wantsSsl = url.includes("supabase.co") || /[?&](sslmode=(require|verify-ca|verify-full)|ssl=true)/.test(url);
+  const wantsSsl =
+    url.includes("supabase.co") ||
+    url.includes("supabase.com") ||
+    /[?&](sslmode=(require|verify-ca|verify-full)|ssl=true)/.test(url);
   if (!wantsSsl) return undefined;
   let ca = SUPABASE_ROOT_CA;
   const caEnv = process.env.DATABASE_CA_CERT;
