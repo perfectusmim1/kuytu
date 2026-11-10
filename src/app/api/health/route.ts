@@ -7,10 +7,12 @@ export async function GET() {
   try {
     await db.execute(sql`select 1`);
     return Response.json({ ok: true });
-  } catch (err: unknown) {
-    console.error("Health check error:", err);
+  } catch (err: any) {
+    const root = err?.cause?.message || err?.message || String(err);
+    const code = err?.cause?.code || err?.code;
+    console.error("Health check error:", root, code);
     return Response.json(
-      { ok: false, error: err instanceof Error ? err.message : String(err) },
+      { ok: false, error: root, code },
       { status: 500 }
     );
   }
