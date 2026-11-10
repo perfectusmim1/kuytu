@@ -443,71 +443,91 @@ function TextBlock({
   }
 
   const hasEmbed = embeds.length > 0;
-  const embedOnly = hasEmbed && !hasVisibleText && !reply && !forwarded;
+  const hasBubbleContent = hasVisibleText || Boolean(reply) || Boolean(forwarded);
   const metaPadWidth = (mine ? 56 : 38) + (starred ? 14 : 0) + (pinned ? 14 : 0);
+  const standaloneMeta = <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="peer" />;
 
   return (
-    <div
-      className={cx(
-        "relative max-w-full rounded-[20px] text-[15px] leading-[1.4]",
-        embedOnly ? "p-1.5" : "px-3 py-2",
-        mine ? "border border-[#3d3128] bg-own text-own-ink" : "border border-line bg-peer text-peer-ink",
-        tail && (mine ? "rounded-br-md" : "rounded-bl-md"),
-      )}
-    >
-      {forwarded ? <ForwardedTag inOwnBubble={mine} /> : null}
-      {reply ? (
-        <ReplyQuote reply={reply} meId={meId} peerName={peerName} inOwnBubble={mine} onJump={onJump} />
-      ) : null}
-      <div className={cx("flex flex-col gap-1.5", hasEmbed && hasVisibleText && "mb-1.5")}>
-        {embeds.map((e) =>
-          e.kind === "image" ? (
-            <LinkImage key={e.url} src={e.src} auto={autoEmbeds} onImage={onImage} />
-          ) : (
-            <EmbedCard
-              key={e.url}
-              embed={e}
-              auto={autoEmbeds}
-              dark={dark}
-              inOwnBubble={mine}
-              onImage={onImage}
-            />
-          ),
-        )}
-      </div>
-      {hasVisibleText ? (
-        <>
-          <span className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[14px]">
-            {visibleParts.map((part, i) =>
-              part.link ? (
-                <a
-                  key={i}
-                  href={part.value}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className={cx(
-                    "underline decoration-1 underline-offset-2",
-                    mine ? "text-own-accent" : "text-accent",
-                  )}
-                >
-                  {part.value}
-                </a>
-              ) : (
-                <span key={i}>{part.value}</span>
-              ),
-            )}
-          </span>
-          <span className="inline-block h-3" style={{ width: metaPadWidth }} aria-hidden />
-          <span className="absolute bottom-2 right-3">
-            <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
-          </span>
-        </>
-      ) : (
-        <div className="mt-1 flex justify-end px-1.5 pb-0.5">
-          <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+    <div className={cx("flex max-w-full flex-col gap-1.5", mine ? "items-end" : "items-start")}>
+      {hasBubbleContent ? (
+        <div
+          className={cx(
+            "relative max-w-full rounded-[20px] px-3 py-2 text-[15px] leading-[1.4]",
+            mine ? "border border-[#3d3128] bg-own text-own-ink" : "border border-line bg-peer text-peer-ink",
+            tail && !hasEmbed && (mine ? "rounded-br-md" : "rounded-bl-md"),
+          )}
+        >
+          {forwarded ? <ForwardedTag inOwnBubble={mine} /> : null}
+          {reply ? (
+            <ReplyQuote reply={reply} meId={meId} peerName={peerName} inOwnBubble={mine} onJump={onJump} />
+          ) : null}
+          {hasVisibleText ? (
+            <>
+              <span className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[14px]">
+                {visibleParts.map((part, i) =>
+                  part.link ? (
+                    <a
+                      key={i}
+                      href={part.value}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className={cx(
+                        "underline decoration-1 underline-offset-2",
+                        mine ? "text-own-accent" : "text-accent",
+                      )}
+                    >
+                      {part.value}
+                    </a>
+                  ) : (
+                    <span key={i}>{part.value}</span>
+                  ),
+                )}
+              </span>
+              {!hasEmbed ? (
+                <>
+                  <span className="inline-block h-3" style={{ width: metaPadWidth }} aria-hidden />
+                  <span className="absolute bottom-2 right-3">
+                    <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+                  </span>
+                </>
+              ) : null}
+            </>
+          ) : !hasEmbed ? (
+            <div className="mt-1 flex justify-end">
+              <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+            </div>
+          ) : null}
         </div>
-      )}
+      ) : null}
+
+      {hasEmbed ? (
+        <div className={cx("flex max-w-full flex-col gap-1.5", mine ? "items-end" : "items-start")}>
+          {embeds.map((e, idx) => {
+            const isLast = idx === embeds.length - 1;
+            return e.kind === "image" ? (
+              <div key={e.url} className="relative">
+                <LinkImage src={e.src} auto={autoEmbeds} onImage={onImage} />
+                {isLast ? (
+                  <span className="pointer-events-none absolute bottom-3.5 right-2 rounded-full bg-black/55 px-2 py-1">
+                    <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <EmbedCard
+                key={e.url}
+                embed={e}
+                auto={autoEmbeds}
+                dark={dark}
+                inOwnBubble={mine}
+                footerMeta={isLast ? standaloneMeta : undefined}
+                onImage={onImage}
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

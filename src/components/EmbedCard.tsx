@@ -1,7 +1,7 @@
 "use client";
 
 import { ExternalLink, LoaderCircle, Play } from "lucide-react";
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import { EMBED_DOMAIN, EMBED_NAME, embedFrame, type Embed } from "@/lib/embeds";
 import { cx } from "@/lib/format";
 import { getCachedSocial, loadProxiedVideo, resolveSocial, type ResolvedSocial } from "@/lib/media";
@@ -25,7 +25,7 @@ function formatDuration(sec: number | null | undefined): string | null {
 }
 
 /**
- * Dark-themed social media card inside the message bubble.
+ * Standalone social media card matching Kuytu's surface & hairline tokens.
  * Renders Instagram, TikTok, and X natively (using server-resolved thumbnails,
  * multi-image grids, and proxied MP4 video streams) and YouTube widescreen (16:9).
  */
@@ -33,12 +33,14 @@ export const EmbedCard = memo(function EmbedCard({
   embed,
   auto,
   dark,
+  footerMeta,
   onImage,
 }: {
   embed: FrameEmbed;
   auto: boolean;
   dark: boolean;
   inOwnBubble?: boolean;
+  footerMeta?: ReactNode;
   onImage?: (src: string) => void;
 }) {
   const [armed, setArmed] = useState(auto);
@@ -110,25 +112,30 @@ export const EmbedCard = memo(function EmbedCard({
 
   if (!armed) {
     return (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setArmed(true);
-        }}
+      <div
         className={cx(
-          "flex items-center gap-3 rounded-xl border border-[#2e2b27] bg-[#161513] px-3.5 py-3 text-left text-[#ede8df] transition-colors hover:bg-[#1e1c19]",
+          "overflow-hidden rounded-[18px] border border-line bg-surface text-left text-ink",
           cardWidthClass,
         )}
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink">
-          <Play size={16} className="ml-0.5 fill-current" aria-hidden />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-semibold">{name} önizlemesini göster</span>
-          <span className="block truncate text-[11px] text-[#a59e92]">{domain}</span>
-        </span>
-      </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setArmed(true);
+          }}
+          className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-raised"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink">
+            <Play size={16} className="ml-0.5 fill-current" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-semibold text-ink">{name} önizlemesini göster</span>
+            <span className="block truncate text-[11px] text-muted">{domain}</span>
+          </span>
+        </button>
+        {footerMeta ? <div className="flex justify-end px-3 pb-2">{footerMeta}</div> : null}
+      </div>
     );
   }
 
@@ -321,14 +328,14 @@ export const EmbedCard = memo(function EmbedCard({
   return (
     <div
       className={cx(
-        "overflow-hidden rounded-xl border border-[#2e2b27] bg-[#161513] text-left text-[#ede8df] shadow-sm",
+        "overflow-hidden rounded-[18px] border border-line bg-surface text-left text-ink",
         cardWidthClass,
       )}
     >
       {mediaArea}
-      <div className="px-3 py-2.5">
+      <div className="border-t border-line/60 px-3.5 py-2.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="truncate text-[13.5px] font-semibold leading-snug text-[#ede8df]">
+          <p className="truncate text-[13.5px] font-semibold leading-snug text-ink">
             {meta?.title ?? name}
           </p>
           <a
@@ -337,20 +344,23 @@ export const EmbedCard = memo(function EmbedCard({
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             aria-label={`${name} uygulamasında aç`}
-            className="shrink-0 text-[#a59e92] transition-colors hover:text-[#ede8df]"
+            className="shrink-0 text-muted transition-colors hover:text-ink"
           >
             <ExternalLink size={13} />
           </a>
         </div>
         {meta?.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-[#b5aea2]">
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-muted">
             {meta.description}
           </p>
         ) : null}
-        <p className="mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[#8d867b]">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: DOT[embed.kind] }} aria-hidden />
-          <span className="truncate">{domain}</span>
-        </p>
+        <div className="mt-1.5 flex items-center justify-between gap-2">
+          <p className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-faint">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: DOT[embed.kind] }} aria-hidden />
+            <span className="truncate">{domain}</span>
+          </p>
+          {footerMeta ? <div className="shrink-0">{footerMeta}</div> : null}
+        </div>
       </div>
     </div>
   );
