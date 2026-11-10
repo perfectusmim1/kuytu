@@ -216,7 +216,7 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
     (Boolean((window as unknown as { Capacitor?: unknown }).Capacitor) || /\bwv\b/i.test(navigator.userAgent));
   const isApp = Boolean(android || isLegacyApk);
 
-  const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.3");
+  const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.4");
   const currentVersion = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
 
   const [latestTag, setLatestTag] = useState<string | null>(null);

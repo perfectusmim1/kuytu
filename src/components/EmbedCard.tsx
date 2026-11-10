@@ -2,6 +2,7 @@
 
 import { ExternalLink, LoaderCircle, Play } from "lucide-react";
 import { memo, useEffect, useState, type ReactNode } from "react";
+import { ProtectedImage } from "./ui";
 import { EMBED_DOMAIN, EMBED_NAME, embedFrame, type Embed } from "@/lib/embeds";
 import { cx } from "@/lib/format";
 import { getCachedSocial, loadProxiedVideo, resolveSocial, type ResolvedSocial } from "@/lib/media";
@@ -153,19 +154,32 @@ export const EmbedCard = memo(function EmbedCard({
         <video
           src={videoSrc}
           controls
+          controlsList="nodownload nofullscreen noremoteplayback"
+          disablePictureInPicture
+          disableRemotePlayback
           autoPlay
           playsInline
+          onLoadedData={() => {
+            if (videoSrc.startsWith("blob:")) {
+              try {
+                URL.revokeObjectURL(videoSrc);
+              } catch {
+                /* ignore */
+              }
+            }
+          }}
+          onContextMenu={(e) => e.preventDefault()}
           onClick={(e) => e.stopPropagation()}
-          className="block max-h-[420px] w-full bg-black object-contain"
+          className="block max-h-[420px] w-full bg-black object-contain select-none"
         />
       ) : (
         <div className="relative flex h-[290px] w-full items-center justify-center bg-black text-white">
           {meta.thumbDataUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            <ProtectedImage
               src={meta.thumbDataUrl}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover opacity-40"
+              fit="cover"
+              className="absolute inset-0 h-full w-full opacity-40"
             />
           ) : null}
           <span className="relative flex items-center gap-2 rounded-full bg-black/75 px-3.5 py-2 text-xs font-medium">
@@ -236,12 +250,11 @@ export const EmbedCard = memo(function EmbedCard({
             )}
             aria-label="Görseli büyüt"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <ProtectedImage
               src={src}
               alt=""
-              className="h-full w-full object-cover transition-transform duration-200 group-hover/img:scale-105"
-              draggable={false}
+              fit="cover"
+              className="h-full w-full transition-transform duration-200 group-hover/img:scale-105"
             />
           </button>
         ))}
@@ -268,12 +281,11 @@ export const EmbedCard = memo(function EmbedCard({
         )}
         aria-label={isPlayable ? `${name} videosunu oynat` : `${name} görselini büyüt`}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <ProtectedImage
           src={meta.thumbDataUrl}
           alt={meta.title ?? name}
-          className="h-full w-full object-cover transition-transform duration-300 group-hover/play:scale-[1.02]"
-          draggable={false}
+          fit="cover"
+          className="h-full w-full transition-transform duration-300 group-hover/play:scale-[1.02]"
         />
         <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/15" />
         {isPlayable ? (

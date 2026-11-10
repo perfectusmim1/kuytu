@@ -3,6 +3,149 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { cx } from "@/lib/format";
+import { getVaultBlob } from "@/lib/media";
+
+export function ProtectedImage({
+  src,
+  alt = "",
+  className,
+  fit = "cover",
+  onError,
+}: {
+  src: string;
+  alt?: string;
+  className?: string;
+  fit?: "cover" | "contain";
+  onError?: () => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const [useCanvas, setUseCanvas] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    let revokeUrl: string | null = null;
+
+    const renderToCanvas = (source: ImageBitmap | HTMLImageElement, w: number, h: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas || cancelled) return;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(source, 0, 0, w, h);
+    };
+
+    const run = async () => {
+      const blob = getVaultBlob(src);
+      if (blob) {
+        if (blob.type === "image/gif") {
+          setUseCanvas(false);
+          revokeUrl = URL.createObjectURL(blob);
+          setFallbackUrl(revokeUrl);
+          return;
+        }
+        setUseCanvas(true);
+        try {
+          if (typeof createImageBitmap === "function") {
+            const bmp = await createImageBitmap(blob);
+            if (cancelled) {
+              bmp.close();
+              return;
+            }
+            renderToCanvas(bmp, bmp.width, bmp.height);
+            bmp.close();
+            return;
+          }
+        } catch {
+          /* fall through to one-shot Image decode */
+        }
+        const oneShot = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(oneShot);
+          if (!cancelled) renderToCanvas(img, img.naturalWidth || 1, img.naturalHeight || 1);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(oneShot);
+          if (!cancelled) onError?.();
+        };
+        img.src = oneShot;
+        return;
+      }
+
+      if (src.startsWith("data:image/") && !src.startsWith("data:image/gif")) {
+        setUseCanvas(true);
+        const img = new Image();
+        img.onload = () => {
+          if (!cancelled) renderToCanvas(img, img.naturalWidth || 1, img.naturalHeight || 1);
+        };
+        img.onerror = () => {
+          if (!cancelled) onError?.();
+        };
+        img.src = src;
+        return;
+      }
+
+      setUseCanvas(false);
+      setFallbackUrl(src);
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [src, onError]);
+
+  if (useCanvas) {
+    return (
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-label={alt}
+        onContextMenu={(e) => e.preventDefault()}
+        onDragStart={(e) => e.preventDefault()}
+        className={cx(
+          "select-none pointer-events-none",
+          fit === "contain" ? "object-contain" : "object-cover",
+          className,
+        )}
+      />
+    );
+  }
+
+  if (!fallbackUrl) return null;
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={fallbackUrl}
+      alt={alt}
+      draggable={false}
+      referrerPolicy="no-referrer"
+      onLoad={() => {
+        if (fallbackUrl.startsWith("blob:")) {
+          try {
+            URL.revokeObjectURL(fallbackUrl);
+          } catch {
+            /* ignore */
+          }
+        }
+      }}
+      onError={onError}
+      onContextMenu={(e) => e.preventDefault()}
+      onDragStart={(e) => e.preventDefault()}
+      className={cx(
+        "select-none pointer-events-none",
+        fit === "contain" ? "object-contain" : "object-cover",
+        className,
+      )}
+    />
+  );
+}
 
 export function Wordmark({ className }: { className?: string }) {
   return (

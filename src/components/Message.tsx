@@ -33,6 +33,7 @@ import {
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import { EmbedCard } from "./EmbedCard";
+import { ProtectedImage } from "./ui";
 import { parseEmbed, splitText, type Embed } from "@/lib/embeds";
 import { clock, cx } from "@/lib/format";
 import { loadEncryptedMedia } from "@/lib/media";
@@ -249,13 +250,11 @@ function ImageBlock({
           }}
           aria-label="Fotoğrafı büyüt"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <ProtectedImage
             src={src}
             alt="Gönderilen fotoğraf"
-            className="h-full w-full object-cover"
-            referrerPolicy="no-referrer"
-            draggable={false}
+            className="h-full w-full"
+            fit="cover"
             onError={() => setError(true)}
           />
         </button>
@@ -300,8 +299,7 @@ function GifBlock({
   return (
     <MediaFrame w={p.w} h={p.h} max={260}>
       {armed ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={p.url} alt="GIF" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+        <ProtectedImage src={p.url} alt="GIF" className="h-full w-full" fit="cover" />
       ) : (
         <button
           type="button"
@@ -356,14 +354,12 @@ function LinkImage({ src, auto, onImage }: { src: string; auto: boolean; onImage
       }}
       className="mb-1.5 block overflow-hidden rounded-xl border border-line bg-sunken"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <ProtectedImage
         src={src}
         alt="Paylaşılan görsel"
-        loading="lazy"
-        referrerPolicy="no-referrer"
+        fit="contain"
         onError={() => setBroken(true)}
-        className="block max-h-64 w-[256px] max-w-full object-contain"
+        className="block max-h-64 w-[256px] max-w-full"
       />
     </button>
   );

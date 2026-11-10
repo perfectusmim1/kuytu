@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import AuthScreen from "./AuthScreen";
 import Messenger from "./Messenger";
+import { SecurityShield } from "./SecurityShield";
 import { Wordmark } from "./ui";
 import { registerSW } from "@/lib/notify";
 import { usePrefs } from "@/lib/prefs";
@@ -66,26 +67,34 @@ export default function App() {
 
   if (phase === "boot") {
     return (
-      <div className="flex h-dvh items-center justify-center bg-bg">
-        <Wordmark className="fade text-5xl text-ink" />
-      </div>
+      <SecurityShield>
+        <div className="flex h-dvh items-center justify-center bg-bg">
+          <Wordmark className="fade text-5xl text-ink" />
+        </div>
+      </SecurityShield>
     );
   }
 
   if (phase === "auth" || !session) {
-    return <AuthScreen invited={Boolean(invite)} onAuthed={enter} />;
+    return (
+      <SecurityShield>
+        <AuthScreen invited={Boolean(invite)} onAuthed={enter} />
+      </SecurityShield>
+    );
   }
 
   return (
-    <Messenger
-      key={session.userId}
-      session={session}
-      prefs={prefs}
-      setPrefs={setPrefs}
-      dark={dark}
-      invite={invite}
-      onInviteUsed={clearInvite}
-      onSignOut={lock}
-    />
+    <SecurityShield>
+      <Messenger
+        key={session.userId}
+        session={session}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        dark={dark}
+        invite={invite}
+        onInviteUsed={clearInvite}
+        onSignOut={lock}
+      />
+    </SecurityShield>
   );
 }

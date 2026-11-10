@@ -114,6 +114,14 @@
     cursor: not-allowed;
   }
 
+  img,
+  video,
+  canvas {
+    -webkit-user-drag: none;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+
   * {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in oklab, var(--muted) 28%, transparent) transparent;
@@ -353,5 +361,13 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  html,
+  body {
+    display: none !important;
+    visibility: hidden !important;
   }
 }

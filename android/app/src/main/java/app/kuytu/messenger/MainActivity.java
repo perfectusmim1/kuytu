@@ -16,6 +16,7 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -48,10 +49,15 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         Window window = getWindow();
         if (window != null) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE
+            );
             int bg = Color.parseColor("#121110");
             window.setStatusBarColor(bg);
             window.setNavigationBarColor(bg);
         }
+        WebView.setWebContentsDebuggingEnabled(false);
         ensureNotificationChannel();
         handleNotificationIntent(getIntent());
     }
@@ -64,6 +70,10 @@ public class MainActivity extends BridgeActivity {
             settings.setDomStorageEnabled(true);
             settings.setDatabaseEnabled(true);
             settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+            settings.setAllowFileAccess(false);
+            settings.setAllowContentAccess(false);
+            preWebView.setLongClickable(false);
+            preWebView.setHapticFeedbackEnabled(false);
             preWebView.addJavascriptInterface(new KuytuBridge(), "KuytuAndroid");
         }
         super.load();
@@ -286,9 +296,9 @@ public class MainActivity extends BridgeActivity {
         public String getVersionName() {
             try {
                 PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
-                return info.versionName != null ? info.versionName : "1.0.3";
+                return info.versionName != null ? info.versionName : "1.0.4";
             } catch (Exception e) {
-                return "1.0.3";
+                return "1.0.4";
             }
         }
 

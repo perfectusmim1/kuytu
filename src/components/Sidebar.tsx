@@ -70,7 +70,7 @@ function Row({
   onOpen: (id: string) => void;
   onOpenMenu: (conv: ConvSummary, e: ReactMouseEvent) => void;
 }) {
-  const unread = active ? 0 : c.unread || (markedUnread ? 1 : 0);
+  const unread = markedUnread ? Math.max(1, c.unread) : active ? 0 : c.unread;
   const mine = c.last?.senderId === meId;
   const waiting = c.status === "pending" && c.initiatorId === meId;
   let line = preview ?? "";
@@ -123,7 +123,7 @@ function Row({
               ) : null}
               {unread > 0 ? (
                 <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-bold text-accent-ink">
-                  {c.unread > 99 ? "99+" : c.unread > 0 ? c.unread : ""}
+                  {unread > 99 ? "99+" : unread}
                   <span className="sr-only"> okunmamış mesaj</span>
                 </span>
               ) : null}

@@ -51,7 +51,7 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
 
   if (file.type === "image/gif") {
     if (file.size > MAX_GIF) throw new Error("GIF çok büyük (en fazla 8 MB).");
-    return { blob: file, w, h, mime: "image/gif" };
+    return { blob: file, w: cwOr(w), h: cwOr(h), mime: "image/gif" };
   }
 
   const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
@@ -70,25 +70,58 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   return { blob, w: cw, h: ch, mime: "image/jpeg" };
 }
 
-const cache = new Map<string, Promise<string>>();
-
-/** Lets the sender keep showing the local copy instead of re-downloading it. */
-export function rememberMedia(url: string, objectUrl: string) {
-  cache.set(url, Promise.resolve(objectUrl));
+function cwOr(n: number): number {
+  return Math.max(1, Math.round(n));
 }
 
-/** Downloads ciphertext through our relay, decrypts on the device, returns a blob: URL. */
+/**
+ * Private in-memory Blob vault.
+ * Instead of exposing persistent `blob:https://...` URLs that can be copied and opened
+ * in external tabs, media is referenced by internal `kuytu-vault://<id>` tokens and rendered
+ * onto `<canvas>` (or via self-revoking 1-shot object URLs).
+ */
+const blobVault = new Map<string, Blob>();
+const mediaTokenCache = new Map<string, Promise<string>>();
+
+export function registerLocalBlob(blob: Blob): string {
+  const token = `kuytu-vault://${crypto.randomUUID()}`;
+  blobVault.set(token, blob);
+  return token;
+}
+
+export function getVaultBlob(tokenOrUrl: string): Blob | null {
+  return blobVault.get(tokenOrUrl) ?? null;
+}
+
+/** Lets the sender keep showing the local copy instead of re-downloading it. */
+export function rememberMedia(url: string, token: string) {
+  const blob = blobVault.get(token);
+  if (blob) {
+    blobVault.set(url, blob);
+  }
+  mediaTokenCache.set(url, Promise.resolve(token));
+}
+
+/** Downloads ciphertext through our relay, decrypts on the device, returns an internal vault token. */
 export function loadEncryptedMedia(url: string, enc: { k: string; iv: string; mime: string }): Promise<string> {
-  let p = cache.get(url);
+  let p = mediaTokenCache.get(url);
   if (!p) {
     p = (async () => {
+      const existing = blobVault.get(url);
+      if (existing) {
+        const tok = registerLocalBlob(existing);
+        return tok;
+      }
       const res = await authFetch(`/api/media?u=${encodeURIComponent(url)}`);
       if (!res.ok) throw new Error("Medya alınamadı.");
       const plain = await decryptBytes(await res.arrayBuffer(), enc.k, enc.iv);
-      return URL.createObjectURL(new Blob([plain], { type: enc.mime }));
+      const blob = new Blob([plain], { type: enc.mime });
+      const token = registerLocalBlob(blob);
+      blobVault.set(url, blob);
+      return token;
     })();
-    cache.set(url, p);
-    p.catch(() => cache.delete(url));
+    mediaTokenCache.set(url, p);
+    p.catch(() => mediaTokenCache.delete(url));
   }
   return p;
 }
@@ -145,21 +178,25 @@ export function resolveTikTok(url: string): Promise<{ id: string; photo: boolean
   return resolveSocial(url).then((r) => (r?.id ? { id: r.id, photo: Boolean(r.photo) } : null));
 }
 
-const videoBlobCache = new Map<string, Promise<string>>();
+const videoRawBlobCache = new Map<string, Promise<Blob>>();
 
-/** Downloads a social video stream through our authenticated relay and returns a blob: URL. */
-export function loadProxiedVideo(videoUrl: string): Promise<string> {
-  let p = videoBlobCache.get(videoUrl);
+/**
+ * Downloads a social video stream through our authenticated relay and returns a one-time
+ * ephemeral `blob:` URL that is immediately revoked once `<video>` buffers it.
+ */
+export async function loadProxiedVideo(videoUrl: string): Promise<string> {
+  let p = videoRawBlobCache.get(videoUrl);
   if (!p) {
     p = (async () => {
       const res = await authFetch(`/api/resolve?proxy=1&url=${encodeURIComponent(videoUrl)}`);
       if (!res.ok) throw new Error("Video yüklenemedi.");
       const ct = res.headers.get("content-type") || "video/mp4";
       const buf = await res.arrayBuffer();
-      return URL.createObjectURL(new Blob([buf], { type: ct }));
+      return new Blob([buf], { type: ct });
     })();
-    videoBlobCache.set(videoUrl, p);
-    p.catch(() => videoBlobCache.delete(videoUrl));
+    videoRawBlobCache.set(videoUrl, p);
+    p.catch(() => videoRawBlobCache.delete(videoUrl));
   }
-  return p;
+  const blob = await p;
+  return URL.createObjectURL(blob);
 }

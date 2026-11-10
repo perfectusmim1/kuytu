@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Avatar, ConfirmButton, Dialog, Switch } from "./ui";
+import { Avatar, ConfirmButton, Dialog, ProtectedImage, Switch } from "./ui";
 import { safetyNumber } from "@/lib/crypto";
 import { previewOf, splitText } from "@/lib/embeds";
 import { clock, errText, lastSeen } from "@/lib/format";
@@ -195,13 +195,11 @@ function SharedMediaThumb({
       className="group relative aspect-square w-full overflow-hidden rounded-xl border border-line bg-sunken"
       aria-label="Medyayı aç"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <ProtectedImage
         src={src}
         alt=""
-        loading="lazy"
-        referrerPolicy="no-referrer"
-        className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+        fit="cover"
+        className="h-full w-full transition-transform duration-200 group-hover:scale-105"
       />
       {p.t === "gif" ? (
         <span className=" absolute bottom-1 left-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-bold text-white">
@@ -521,16 +519,18 @@ export function Lightbox({ src, onClose }: { src: string; onClose: () => void })
       role="dialog"
       aria-modal="true"
       aria-label="Fotoğraf"
-      className="fade fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-3"
+      className="fade fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-3 select-none"
       onClick={onClose}
+      onContextMenu={(e) => e.preventDefault()}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt="Büyütülmüş fotoğraf"
-        className="max-h-full max-w-full cursor-default rounded-lg object-contain"
-        onClick={(e) => e.stopPropagation()}
-      />
+      <div className="flex max-h-full max-w-full items-center justify-center" onClick={(e) => e.stopPropagation()}>
+        <ProtectedImage
+          src={src}
+          alt="Büyütülmüş fotoğraf"
+          fit="contain"
+          className="max-h-[90dvh] max-w-[94vw] cursor-default rounded-lg"
+        />
+      </div>
       <button
         type="button"
         autoFocus

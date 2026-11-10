@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { conversationKey, decryptPayload, encryptBytes, encryptPayload } from "./crypto";
 import { normalizePayload, previewOf } from "./embeds";
-import { prepareImage, rememberMedia } from "./media";
+import { prepareImage, registerLocalBlob, rememberMedia } from "./media";
 import { blip, pushNotice } from "./notify";
 import type { Prefs } from "./prefs";
 import type { ChatMessage, ConvSummary, Features, Me, Payload, ReplyRef, SyncResponse, WireMessage } from "./types";
@@ -684,7 +684,7 @@ export function useChat(session: Session, prefs: Prefs) {
   const sendImage = useCallback(
     async (convId: string, file: File, reply?: ReplyRef) => {
       const prepared = await prepareImage(file);
-      const localUrl = URL.createObjectURL(prepared.blob);
+      const localUrl = registerLocalBlob(prepared.blob);
       const viaImgur = prefsRef.current.mediaHost === "imgur" && featuresRef.current.imgur;
       const { w, h, mime, blob } = prepared;
       enqueue(
