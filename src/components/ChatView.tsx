@@ -13,6 +13,7 @@ import {
   CornerUpRight,
   EllipsisVertical,
   Eraser,
+  ExternalLink,
   ImagePlus,
   Info,
   LockKeyhole,
@@ -31,7 +32,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import GifPicker from "./GifPicker";
 import { MessageRow } from "./Message";
 import { Avatar, ConfirmButton, Dialog } from "./ui";
-import { previewOf } from "@/lib/embeds";
+import { parseEmbed, previewOf, splitText } from "@/lib/embeds";
 import { cx, dayKey, dayLabel, errText, lastSeen } from "@/lib/format";
 import type { Prefs } from "@/lib/prefs";
 import type { ChatMessage, ConvSummary, Me, ReplyRef } from "@/lib/types";
@@ -517,6 +518,25 @@ export default function ChatView({
     () => messages.filter((m) => selectedIds.has(m.id)),
     [messages, selectedIds],
   );
+
+  const singleLink = useMemo(() => {
+    if (selectedMessages.length !== 1) return null;
+    const m = selectedMessages[0];
+    const p = m.payload;
+    if (!p || m.deleted) return null;
+    if (p.t === "gif") return p.url;
+    if (p.t === "text") {
+      const parts = splitText(p.body);
+      for (const part of parts) {
+        if (!part.link) continue;
+        const e = parseEmbed(part.value);
+        if (e) return e.url;
+      }
+      const first = parts.find((pt) => pt.link);
+      return first ? first.value : null;
+    }
+    return null;
+  }, [selectedMessages]);
 
   const handleBulkCopy = () => {
     const texts = selectedMessages
@@ -1087,6 +1107,20 @@ export default function ChatView({
                   >
                     <Pin size={18} className={pinnedId === selectedMessages[0].id ? "fill-current text-accent" : ""} />
                   </button>
+                  {singleLink ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.open(singleLink, "_blank", "noopener,noreferrer");
+                        exitSelectMode();
+                      }}
+                      aria-label="Bağlantıyı aç"
+                      className="icon-btn"
+                      title="Aç"
+                    >
+                      <ExternalLink size={18} />
+                    </button>
+                  ) : null}
                 </>
               ) : null}
               <button

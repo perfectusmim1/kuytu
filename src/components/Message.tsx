@@ -9,6 +9,7 @@ import {
   Copy,
   CornerUpRight,
   Ellipsis,
+  ExternalLink,
   ImageOff,
   LoaderCircle,
   LockKeyhole,
@@ -617,6 +618,7 @@ function ContextMenu({
   canReply,
   canCopy,
   canForward,
+  openLink,
   onClose,
   onReact,
   onReply,
@@ -635,6 +637,7 @@ function ContextMenu({
   canReply: boolean;
   canCopy: boolean;
   canForward: boolean;
+  openLink?: string | null;
   onClose: () => void;
   onReact: (emoji: string) => void;
   onReply: () => void;
@@ -657,9 +660,9 @@ function ContextMenu({
     }
     const el = ref.current;
     const w = el?.offsetWidth || 216;
-    const h = el?.offsetHeight || (canReply ? 345 : 130);
+    const h = el?.offsetHeight || (canReply ? (openLink ? 385 : 345) : 130);
     setCoords(computeMenuCoords(anchor, mine, w, h));
-  }, [anchor, mine, canReply]);
+  }, [anchor, mine, canReply, openLink]);
 
   useEffect(() => {
     if (!anchor) return;
@@ -738,6 +741,21 @@ function ContextMenu({
           >
             <Reply size={15} aria-hidden />
             Cevapla
+          </button>
+        ) : null}
+
+        {openLink ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              window.open(openLink, "_blank", "noopener,noreferrer");
+            }}
+          >
+            <ExternalLink size={15} aria-hidden />
+            Aç
           </button>
         ) : null}
 
@@ -878,6 +896,21 @@ export const MessageRow = memo(function MessageRow({
           ? p.url
           : null
       : null;
+  const openLink = useMemo(() => {
+    if (!p || m.deleted) return null;
+    if (p.t === "gif") return p.url;
+    if (p.t === "text") {
+      const parts = splitText(p.body);
+      for (const part of parts) {
+        if (!part.link) continue;
+        const e = parseEmbed(part.value);
+        if (e) return e.url;
+      }
+      const first = parts.find((pt) => pt.link);
+      return first ? first.value : null;
+    }
+    return null;
+  }, [p, m.deleted]);
   const canReply = !m.deleted && Boolean(p) && !m.state;
   const canForward = !m.deleted && Boolean(p) && !m.state && p?.t !== "react";
   const myReaction = m.reactions?.[meId] ?? "";
@@ -1091,6 +1124,7 @@ export const MessageRow = memo(function MessageRow({
                   canReply={canReply}
                   canCopy={copyableText !== null}
                   canForward={canForward}
+                  openLink={openLink}
                   onClose={closeMenu}
                   onReact={(emoji) => onReact(m.id, emoji)}
                   onReply={() => onReply(m)}
