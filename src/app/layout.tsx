@@ -26,8 +26,11 @@ export const metadata: Metadata = {
   formatDetection: { telephone: false },
   robots: { index: false, follow: false },
   icons: {
-    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
-    apple: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    icon: [
+      { url: "/logo.png", type: "image/png", sizes: "256x256" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/icon-192.png", type: "image/png", sizes: "192x192" }],
   },
 };
 

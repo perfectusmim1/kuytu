@@ -100,7 +100,7 @@ export async function pushNotice(title: string, body: string, tag: string): Prom
   }
 
   if (noticeState() !== "granted") return;
-  const options = { body, tag, icon: "/icon.svg", badge: "/icon.svg" };
+  const options = { body, tag, icon: "/logo.png", badge: "/logo.png" };
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) {

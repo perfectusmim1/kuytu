@@ -6,8 +6,18 @@ import { cx } from "@/lib/format";
 
 export function Wordmark({ className }: { className?: string }) {
   return (
-    <span className={cx("font-serif tracking-tight", className)}>
-      Kuytu<span className="text-accent">.</span>
+    <span className={cx("inline-flex items-center gap-[0.32em] font-serif tracking-tight", className)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/logo.png"
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="h-[1.05em] w-[1.05em] shrink-0 rounded-[24%] border border-white/10 object-cover shadow-xs"
+      />
+      <span>
+        Kuytu<span className="text-accent">.</span>
+      </span>
     </span>
   );
 }

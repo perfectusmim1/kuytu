@@ -1,7 +1,7 @@
 /* Kuytu service worker: caches immutable static bundles/icons for instant startup
    and delivers notifications. API responses and message data are never cached here. */
 
-const STATIC_CACHE = "kuytu-static-v2";
+const STATIC_CACHE = "kuytu-static-v3";
 
 self.addEventListener("install", () => self.skipWaiting());
 
@@ -25,6 +25,9 @@ self.addEventListener("fetch", (event) => {
   // Cache-first for hashed Next.js static chunks, fonts, and icons
   if (
     url.pathname.startsWith("/_next/static/") ||
+    url.pathname === "/logo.png" ||
+    url.pathname === "/icon-192.png" ||
+    url.pathname === "/icon-512.png" ||
     url.pathname === "/icon.svg" ||
     url.pathname === "/manifest.webmanifest"
   ) {
