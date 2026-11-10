@@ -35,6 +35,7 @@ import { EmbedCard } from "./EmbedCard";
 import { parseEmbed, splitText, type Embed } from "@/lib/embeds";
 import { clock, cx } from "@/lib/format";
 import { loadEncryptedMedia } from "@/lib/media";
+import { vibrate } from "@/lib/notify";
 import type { ChatMessage, Payload, ReplyRef } from "@/lib/types";
 
 type Receipt = "sent" | "seen" | null;
@@ -642,7 +643,9 @@ function ContextMenu({
 
   useEffect(() => {
     if (!anchor) return;
+    const openedAt = Date.now();
     const onDown = (e: PointerEvent) => {
+      if (Date.now() - openedAt < 300) return;
       if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -842,6 +845,8 @@ export const MessageRow = memo(function MessageRow({
 }: RowProps) {
   const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
   const touchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
+  const longPressTriggeredAt = useRef(0);
   const closeMenu = useCallback(() => setMenuAnchor(null), []);
 
   const p = m.payload;
@@ -857,21 +862,57 @@ export const MessageRow = memo(function MessageRow({
   const canForward = !m.deleted && Boolean(p) && !m.state && p?.t !== "react";
   const myReaction = m.reactions?.[meId] ?? "";
 
+  const clearTouch = () => {
+    if (touchTimer.current) {
+      clearTimeout(touchTimer.current);
+      touchTimer.current = null;
+    }
+    touchStartPos.current = null;
+  };
+
   const handleContextMenu = (e: ReactMouseEvent) => {
-    if (selectMode) return;
     e.preventDefault();
+    if (Date.now() - longPressTriggeredAt.current < 900) return;
+    if (typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches) {
+      longPressTriggeredAt.current = Date.now();
+      vibrate(16);
+      if (selectMode) onToggleSelect(m.id);
+      else onStartSelect(m.id);
+      return;
+    }
+    if (selectMode) return;
     setMenuAnchor({ x: e.clientX, top: e.clientY, bottom: e.clientY });
   };
 
   const handleTouchStart = (e: ReactTouchEvent) => {
-    if (selectMode) return;
     const t = e.touches[0];
-    const x = t ? t.clientX : window.innerWidth / 2;
-    const y = t ? t.clientY : window.innerHeight / 2;
+    if (!t) return;
+    touchStartPos.current = { x: t.clientX, y: t.clientY };
     if (touchTimer.current) clearTimeout(touchTimer.current);
     touchTimer.current = setTimeout(() => {
-      setMenuAnchor({ x, top: y, bottom: y });
-    }, 450);
+      touchTimer.current = null;
+      longPressTriggeredAt.current = Date.now();
+      vibrate(16);
+      if (selectMode) onToggleSelect(m.id);
+      else onStartSelect(m.id);
+    }, 360);
+  };
+
+  const handleTouchMove = (e: ReactTouchEvent) => {
+    if (!touchStartPos.current || !touchTimer.current) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dx = Math.abs(t.clientX - touchStartPos.current.x);
+    const dy = Math.abs(t.clientY - touchStartPos.current.y);
+    if (dx > 12 || dy > 12) {
+      clearTouch();
+    }
+  };
+
+  const handleRowClick = () => {
+    if (!selectMode) return;
+    if (Date.now() - longPressTriggeredAt.current < 550) return;
+    onToggleSelect(m.id);
   };
 
   const toggleMenuFromButton = (e: ReactMouseEvent<HTMLButtonElement>) => {
@@ -880,13 +921,6 @@ export const MessageRow = memo(function MessageRow({
     setMenuAnchor((prev) =>
       prev ? null : { x: mine ? rect.right : rect.left, top: rect.top, bottom: rect.bottom },
     );
-  };
-
-  const clearTouch = () => {
-    if (touchTimer.current) {
-      clearTimeout(touchTimer.current);
-      touchTimer.current = null;
-    }
   };
 
   let content: ReactNode;
@@ -955,13 +989,14 @@ export const MessageRow = memo(function MessageRow({
       onContextMenu={handleContextMenu}
       onTouchStart={handleTouchStart}
       onTouchEnd={clearTouch}
-      onTouchMove={clearTouch}
-      onClick={selectMode ? () => onToggleSelect(m.id) : undefined}
+      onTouchCancel={clearTouch}
+      onTouchMove={handleTouchMove}
+      onClick={selectMode ? handleRowClick : undefined}
       onDoubleClick={!selectMode && canReply ? () => onReply(m) : undefined}
       className={cx(
-        "group flex w-full items-center gap-2.5 rounded-2xl px-3 py-0.5 transition-colors duration-300 md:px-6",
-        selectMode && "cursor-pointer select-none hover:bg-sunken/50",
-        selected && "bg-accent-soft/65",
+        "group flex w-full select-none items-center gap-2.5 rounded-2xl px-3 py-0.5 transition-colors duration-200 [-webkit-touch-callout:none] md:px-6",
+        selectMode && "cursor-pointer hover:bg-sunken/50",
+        selected && "bg-accent-soft/75",
         head ? "mt-2.5" : "mt-[2px]",
       )}
     >

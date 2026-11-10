@@ -84,11 +84,18 @@ export default function Messenger({ session, prefs, setPrefs, dark, invite, onIn
       .finally(onInviteUsed);
   }, [invite, me, start, say, onInviteUsed]);
 
-  // Phone back button / gesture closes the open chat instead of leaving the app.
+  // Phone back button / gesture closes open modal/lightbox first, then open chat, instead of leaving the app.
   const pushed = useRef(false);
+  const panelRef = useRef(panel);
+  const lightboxRef = useRef(lightbox);
+  panelRef.current = panel;
+  lightboxRef.current = lightbox;
+
   useEffect(() => {
     if (activeId && !pushed.current) {
-      window.history.pushState({ kuytu: "chat" }, "");
+      if ((window.history.state as { kuytu?: string } | null)?.kuytu !== "chat") {
+        window.history.pushState({ kuytu: "chat" }, "");
+      }
       pushed.current = true;
     } else if (!activeId && pushed.current) {
       pushed.current = false;
@@ -98,22 +105,50 @@ export default function Messenger({ session, prefs, setPrefs, dark, invite, onIn
 
   useEffect(() => {
     const onPop = () => {
+      if (lightboxRef.current) {
+        setLightbox(null);
+        window.history.pushState({ kuytu: "chat" }, "");
+        return;
+      }
+      if (panelRef.current) {
+        setPanel(null);
+        if (activeId) window.history.pushState({ kuytu: "chat" }, "");
+        return;
+      }
       pushed.current = false;
       setActive(null);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [setActive]);
+  }, [activeId, setActive]);
 
-  // Tapping a notification opens its conversation.
+  // Tapping a notification (Service Worker or Native Android) opens its conversation.
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
+    const onNativeOpen = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (id) {
+        setPanel(null);
+        setLightbox(null);
+        setActive(id);
+      }
+    };
+    window.addEventListener("kuytu:open-chat", onNativeOpen);
+    if (!("serviceWorker" in navigator)) {
+      return () => window.removeEventListener("kuytu:open-chat", onNativeOpen);
+    }
     const onMessage = (e: MessageEvent) => {
       const data = e.data as { type?: string; id?: string } | null;
-      if (data?.type === "open-chat" && data.id) setActive(data.id);
+      if (data?.type === "open-chat" && data.id) {
+        setPanel(null);
+        setLightbox(null);
+        setActive(data.id);
+      }
     };
     navigator.serviceWorker.addEventListener("message", onMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("kuytu:open-chat", onNativeOpen);
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
   }, [setActive]);
 
   const unreadTotal = (convs ?? []).reduce((n, c) => n + (c.id === activeId ? 0 : c.unread), 0);

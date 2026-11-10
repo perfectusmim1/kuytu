@@ -1011,69 +1011,125 @@ export default function ChatView({
       ) : null}
 
       {selectMode ? (
-        <div className="flex items-center justify-between gap-2 border-t border-line bg-surface px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-2.5 md:px-5">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={exitSelectMode}
-              className="icon-btn"
-              aria-label="Seçimi kapat"
-            >
-              <X size={20} />
-            </button>
-            <span className="text-sm font-semibold tabular-nums">
-              {selectedIds.size} seçildi
-            </span>
-            <button
-              type="button"
-              onClick={selectAll}
-              className="ml-1 rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-sunken hover:text-ink"
-            >
-              Tümünü seç
-            </button>
-          </div>
+        <div className="flex flex-col border-t border-line bg-surface px-3 pb-[max(0.6rem,env(safe-area-inset-bottom))] pt-2 md:px-5">
+          {selectedMessages.length === 1 && !selectedMessages[0].deleted && selectedMessages[0].payload && !selectedMessages[0].state ? (
+            <div className="mb-2 flex items-center justify-center gap-1.5 border-b border-line/60 pb-2">
+              {(["👍", "❤️", "😂", "😮", "😢", "🙏"] as const).map((emoji) => {
+                const single = selectedMessages[0];
+                const active = single.reactions?.[me.id] === emoji;
+                return (
+                  <button
+                    key={emoji}
+                    type="button"
+                    aria-label={`${emoji} ifadesi bırak`}
+                    onClick={() => {
+                      handleReact(single.id, emoji);
+                      exitSelectMode();
+                    }}
+                    className={cx(
+                      "flex h-9 w-9 items-center justify-center rounded-full text-[20px] transition-transform active:scale-95",
+                      active ? "bg-accent-soft ring-1 ring-accent" : "hover:bg-sunken",
+                    )}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
 
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={!selectedIds.size}
-              onClick={handleBulkStar}
-              aria-label="Seçilenleri yıldızla"
-              className="icon-btn disabled:opacity-35"
-              title="Yıldızla"
-            >
-              <Star size={19} />
-            </button>
-            <button
-              type="button"
-              disabled={!selectedIds.size}
-              onClick={handleBulkCopy}
-              aria-label="Seçilenleri kopyala"
-              className="icon-btn disabled:opacity-35"
-              title="Kopyala"
-            >
-              <Copy size={19} />
-            </button>
-            <button
-              type="button"
-              disabled={!selectedIds.size}
-              onClick={handleBulkForward}
-              aria-label="Seçilenleri ilet"
-              className="icon-btn disabled:opacity-35"
-              title="İlet"
-            >
-              <CornerUpRight size={19} />
-            </button>
-            <button
-              type="button"
-              disabled={!selectedIds.size}
-              onClick={handleBulkDelete}
-              aria-label="Seçilenleri sil"
-              className="icon-btn text-danger disabled:opacity-35"
-              title="Sil"
-            >
-              <Trash2 size={19} />
-            </button>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={exitSelectMode}
+                className="icon-btn"
+                aria-label="Seçimi kapat"
+              >
+                <X size={20} />
+              </button>
+              <span className="text-sm font-semibold tabular-nums">
+                {selectedIds.size} seçildi
+              </span>
+              <button
+                type="button"
+                onClick={selectAll}
+                className="ml-0.5 rounded-lg px-2 py-1 text-xs font-medium text-muted hover:bg-sunken hover:text-ink"
+              >
+                Tümü
+              </button>
+            </div>
+
+            <div className="flex items-center gap-0.5">
+              {selectedMessages.length === 1 && !selectedMessages[0].deleted && selectedMessages[0].payload && !selectedMessages[0].state ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyTo(selectedMessages[0]);
+                      exitSelectMode();
+                    }}
+                    aria-label="Yanıtla"
+                    className="icon-btn"
+                    title="Yanıtla"
+                  >
+                    <Reply size={19} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleTogglePin(selectedMessages[0].id);
+                      exitSelectMode();
+                    }}
+                    aria-label="Sabitle"
+                    className="icon-btn"
+                    title="Sabitle"
+                  >
+                    <Pin size={18} className={pinnedId === selectedMessages[0].id ? "fill-current text-accent" : ""} />
+                  </button>
+                </>
+              ) : null}
+              <button
+                type="button"
+                disabled={!selectedIds.size}
+                onClick={handleBulkStar}
+                aria-label="Seçilenleri yıldızla"
+                className="icon-btn disabled:opacity-35"
+                title="Yıldızla"
+              >
+                <Star size={19} />
+              </button>
+              <button
+                type="button"
+                disabled={!selectedIds.size}
+                onClick={handleBulkCopy}
+                aria-label="Seçilenleri kopyala"
+                className="icon-btn disabled:opacity-35"
+                title="Kopyala"
+              >
+                <Copy size={19} />
+              </button>
+              <button
+                type="button"
+                disabled={!selectedIds.size}
+                onClick={handleBulkForward}
+                aria-label="Seçilenleri ilet"
+                className="icon-btn disabled:opacity-35"
+                title="İlet"
+              >
+                <CornerUpRight size={19} />
+              </button>
+              <button
+                type="button"
+                disabled={!selectedIds.size}
+                onClick={handleBulkDelete}
+                aria-label="Seçilenleri sil"
+                className="icon-btn text-danger disabled:opacity-35"
+                title="Sil"
+              >
+                <Trash2 size={19} />
+              </button>
+            </div>
           </div>
         </div>
       ) : incoming ? (

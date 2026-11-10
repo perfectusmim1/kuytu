@@ -94,13 +94,47 @@ export function loadEncryptedMedia(url: string, enc: { k: string; iv: string; mi
 }
 
 const socialCache = new Map<string, Promise<ResolvedSocial | null>>();
+const socialSyncCache = new Map<string, ResolvedSocial>();
+
+export function getCachedSocial(url: string): ResolvedSocial | null {
+  const key = `v3:${url}`;
+  const mem = socialSyncCache.get(key);
+  if (mem) return mem;
+  if (typeof window !== "undefined") {
+    try {
+      const raw = window.sessionStorage.getItem(`kuytu:social:${key}`);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ResolvedSocial;
+        socialSyncCache.set(key, parsed);
+        return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
 
 /** Resolves social media metadata, thumbnail, and direct stream URL via the server relay. */
 export function resolveSocial(url: string): Promise<ResolvedSocial | null> {
+  const cached = getCachedSocial(url);
+  if (cached) return Promise.resolve(cached);
   const key = `v3:${url}`;
   let p = socialCache.get(key);
   if (!p) {
-    p = api<ResolvedSocial>(`/api/resolve?url=${encodeURIComponent(url)}&v=3`).catch(() => null);
+    p = api<ResolvedSocial>(`/api/resolve?url=${encodeURIComponent(url)}&v=3`)
+      .then((res) => {
+        if (res) {
+          socialSyncCache.set(key, res);
+          try {
+            window.sessionStorage.setItem(`kuytu:social:${key}`, JSON.stringify(res));
+          } catch {
+            /* ignore quota */
+          }
+        }
+        return res;
+      })
+      .catch(() => null);
     socialCache.set(key, p);
   }
   return p;

@@ -4,8 +4,7 @@
   "webDir": "capacitor-www",
   "server": {
     "url": "https://kuytu.vercel.app",
-    "cleartext": false,
-    "errorPath": "error.html"
+    "cleartext": false
   },
   "android": {
     "backgroundColor": "#121110",

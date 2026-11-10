@@ -7,11 +7,29 @@ import { prepareImage, rememberMedia } from "./media";
 import { blip, pushNotice } from "./notify";
 import type { Prefs } from "./prefs";
 import type { ChatMessage, ConvSummary, Features, Me, Payload, ReplyRef, SyncResponse, WireMessage } from "./types";
-import { acceptPin, api, ApiError, checkPin, type Session } from "./vault";
+import {
+  acceptPin,
+  api,
+  ApiError,
+  checkPin,
+  loadEncryptedSnapshot,
+  saveEncryptedSnapshot,
+  type Session,
+} from "./vault";
 
 export type Thread = { messages: ChatMessage[]; hasMore: boolean; loaded: boolean; loadingOlder: boolean };
 
 const EMPTY_THREAD: Thread = { messages: [], hasMore: false, loaded: false, loadingOlder: false };
+
+type CachedSnapshot = {
+  me: Me | null;
+  features: Features;
+  convs: ConvSummary[] | null;
+  previews: Record<string, string>;
+  rawMessages: Record<string, ChatMessage[]>;
+  hasMoreMap: Record<string, boolean>;
+  activeId: string | null;
+};
 
 /** Binds each ciphertext to where it belongs, so the server cannot move or replay it elsewhere. */
 const aad = (convId: string, senderId: string, id: string) => `kuytu/v1|${convId}|${senderId}|${id}`;
@@ -83,18 +101,78 @@ function writeLocalJson(key: string, value: unknown) {
   }
 }
 
+function readSessionSnap(userId: string): CachedSnapshot | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(`kuytu:snap:${userId}`);
+    return raw ? (JSON.parse(raw) as CachedSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionSnap(userId: string, snap: CachedSnapshot) {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(`kuytu:snap:${userId}`, JSON.stringify(snap));
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function buildInitialThreads(
+  rawMessages: Record<string, ChatMessage[]> | undefined,
+  hasMoreMap: Record<string, boolean> | undefined,
+  hiddenIds: Set<string>,
+  clearedMap: Record<string, number>,
+): Record<string, Thread> {
+  if (!rawMessages) return {};
+  const out: Record<string, Thread> = {};
+  for (const [convId, raw] of Object.entries(rawMessages)) {
+    if (!Array.isArray(raw)) continue;
+    const cleanRaw = raw.filter((m) => !m.state);
+    out[convId] = {
+      messages: foldThreadMessages(cleanRaw, hiddenIds, clearedMap[convId] ?? 0),
+      hasMore: Boolean(hasMoreMap?.[convId]),
+      loaded: true,
+      loadingOlder: false,
+    };
+  }
+  return out;
+}
+
 export function useChat(session: Session, prefs: Prefs) {
-  const [me, setMe] = useState<Me | null>(null);
-  const [features, setFeatures] = useState<Features>({ gifs: false, imgur: false });
-  const [convs, setConvs] = useState<ConvSummary[] | null>(null);
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [threads, setThreads] = useState<Record<string, Thread>>({});
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const storagePrefix = `kuytu:u:${session.userId}`;
+  const initialSnap = useRef<CachedSnapshot | null>(readSessionSnap(session.userId));
+
+  const hiddenRef = useRef<Set<string>>(
+    new Set(readLocalJson<string[]>(`${storagePrefix}:hidden`, [])),
+  );
+  const clearedSeqRef = useRef<Record<string, number>>(
+    readLocalJson<Record<string, number>>(`${storagePrefix}:cleared`, {}),
+  );
+
+  const [me, setMe] = useState<Me | null>(() => initialSnap.current?.me ?? null);
+  const [features, setFeatures] = useState<Features>(
+    () => initialSnap.current?.features ?? { gifs: false, imgur: false },
+  );
+  const [convs, setConvs] = useState<ConvSummary[] | null>(() => initialSnap.current?.convs ?? null);
+  const [previews, setPreviews] = useState<Record<string, string>>(() => initialSnap.current?.previews ?? {});
+  const [threads, setThreads] = useState<Record<string, Thread>>(() =>
+    buildInitialThreads(
+      initialSnap.current?.rawMessages,
+      initialSnap.current?.hasMoreMap,
+      hiddenRef.current,
+      clearedSeqRef.current,
+    ),
+  );
+  const [activeId, setActiveId] = useState<string | null>(
+    () => initialSnap.current?.activeId ?? readLocalJson<string | null>(`${storagePrefix}:activeId`, null),
+  );
   const [connected, setConnected] = useState(true);
   const [keyChanged, setKeyChanged] = useState<Record<string, boolean>>({});
 
   // Local per-user state for starred, pinned, muted, hidden ("Benden sil"), and cleared watermarks
-  const storagePrefix = `kuytu:u:${session.userId}`;
   const [starred, setStarred] = useState<Record<string, boolean>>(() =>
     readLocalJson<Record<string, boolean>>(`${storagePrefix}:starred`, {}),
   );
@@ -117,17 +195,27 @@ export function useChat(session: Session, prefs: Prefs) {
     readLocalJson<Record<string, boolean>>(`${storagePrefix}:markedUnread`, {}),
   );
 
-  const hiddenRef = useRef<Set<string>>(
-    new Set(readLocalJson<string[]>(`${storagePrefix}:hidden`, [])),
-  );
-  const clearedSeqRef = useRef<Record<string, number>>(
-    readLocalJson<Record<string, number>>(`${storagePrefix}:cleared`, {}),
-  );
-  const rawMessagesRef = useRef<Record<string, ChatMessage[]>>({});
+  const rawMessagesRef = useRef<Record<string, ChatMessage[]>>(initialSnap.current?.rawMessages ?? {});
+  const decryptedCache = useRef<Map<string, ChatMessage>>(new Map());
+  const cachePopulatedRef = useRef(false);
 
-  const activeRef = useRef<string | null>(null);
-  const convsRef = useRef<ConvSummary[]>([]);
-  const threadsRef = useRef<Record<string, Thread>>({});
+  if (!cachePopulatedRef.current) {
+    cachePopulatedRef.current = true;
+    for (const list of Object.values(rawMessagesRef.current)) {
+      if (!Array.isArray(list)) continue;
+      for (const m of list) {
+        if (!m.state && (m.payload || m.deleted)) {
+          decryptedCache.current.set(`${m.id}|${m.deleted ? 1 : 0}`, m);
+        }
+      }
+    }
+  }
+
+  const activeRef = useRef<string | null>(activeId);
+  const convsRef = useRef<ConvSummary[]>(convs ?? []);
+  const threadsRef = useRef<Record<string, Thread>>(threads);
+  const meRef = useRef<Me | null>(me);
+  const previewsRef = useRef<Record<string, string>>(previews);
   const prefsRef = useRef(prefs);
   const featuresRef = useRef(features);
   const mutedRef = useRef(muted);
@@ -141,10 +229,17 @@ export function useChat(session: Session, prefs: Prefs) {
   const kick = useRef<() => void>(() => {});
   const justAdded = useRef(new Map<string, { c: ConvSummary; at: number }>());
   const justRemoved = useRef(new Map<string, number>());
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     threadsRef.current = threads;
   }, [threads]);
+  useEffect(() => {
+    meRef.current = me;
+  }, [me]);
+  useEffect(() => {
+    previewsRef.current = previews;
+  }, [previews]);
   useEffect(() => {
     prefsRef.current = prefs;
   }, [prefs]);
@@ -154,6 +249,80 @@ export function useChat(session: Session, prefs: Prefs) {
   useEffect(() => {
     mutedRef.current = muted;
   }, [muted]);
+
+  const scheduleSnapshotSave = useCallback(() => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const trimmedRaw: Record<string, ChatMessage[]> = {};
+      const hasMoreMap: Record<string, boolean> = {};
+      for (const [cid, list] of Object.entries(rawMessagesRef.current)) {
+        if (!Array.isArray(list)) continue;
+        trimmedRaw[cid] = list.filter((m) => !m.state).slice(-60);
+        hasMoreMap[cid] = Boolean(threadsRef.current[cid]?.hasMore);
+      }
+      const snap: CachedSnapshot = {
+        me: meRef.current,
+        features: featuresRef.current,
+        convs: convsRef.current.length ? convsRef.current : null,
+        previews: previewsRef.current,
+        rawMessages: trimmedRaw,
+        hasMoreMap,
+        activeId: activeRef.current,
+      };
+      writeSessionSnap(session.userId, snap);
+      void saveEncryptedSnapshot(session.userId, snap);
+    }, 180);
+  }, [session.userId]);
+
+  // Hydrate cold-start state from IndexedDB encrypted snapshot if sessionStorage was empty
+  useEffect(() => {
+    if (initialSnap.current?.convs) return;
+    let live = true;
+    loadEncryptedSnapshot<CachedSnapshot>(session.userId).then((snap) => {
+      if (!live || !snap) return;
+      for (const list of Object.values(snap.rawMessages ?? {})) {
+        if (!Array.isArray(list)) continue;
+        for (const m of list) {
+          if (!m.state && (m.payload || m.deleted)) {
+            decryptedCache.current.set(`${m.id}|${m.deleted ? 1 : 0}`, m);
+          }
+        }
+      }
+      if (!meRef.current && snap.me) {
+        meRef.current = snap.me;
+        setMe(snap.me);
+      }
+      if (snap.features) {
+        featuresRef.current = snap.features;
+        setFeatures(snap.features);
+      }
+      if (!convsRef.current.length && snap.convs?.length) {
+        convsRef.current = snap.convs;
+        setConvs(snap.convs);
+      }
+      if (snap.previews && Object.keys(snap.previews).length) {
+        setPreviews((prev) => ({ ...snap.previews, ...prev }));
+      }
+      if (snap.rawMessages && Object.keys(snap.rawMessages).length) {
+        for (const [cid, list] of Object.entries(snap.rawMessages)) {
+          if (!rawMessagesRef.current[cid]?.length) {
+            rawMessagesRef.current[cid] = list;
+          }
+        }
+        const hydrated = buildInitialThreads(
+          rawMessagesRef.current,
+          snap.hasMoreMap,
+          hiddenRef.current,
+          clearedSeqRef.current,
+        );
+        setThreads((prev) => ({ ...hydrated, ...prev }));
+      }
+      writeSessionSnap(session.userId, snap);
+    });
+    return () => {
+      live = false;
+    };
+  }, [session.userId]);
 
   const getKey = useCallback(
     (c: ConvSummary) => {
@@ -170,12 +339,22 @@ export function useChat(session: Session, prefs: Prefs) {
 
   const openWire = useCallback(
     async (c: ConvSummary, m: WireMessage): Promise<ChatMessage> => {
+      const cacheKey = `${m.id}|${m.deleted ? 1 : 0}`;
+      const hit = decryptedCache.current.get(cacheKey);
+      if (hit) return hit;
+
       const base = { id: m.id, seq: m.seq, senderId: m.senderId, createdAt: m.createdAt, deleted: m.deleted };
-      if (m.deleted || !m.iv || !m.ciphertext) return { ...base, payload: null };
+      if (m.deleted || !m.iv || !m.ciphertext) {
+        const res: ChatMessage = { ...base, payload: null };
+        decryptedCache.current.set(cacheKey, res);
+        return res;
+      }
       try {
         const key = await getKey(c);
         const raw = await decryptPayload(key, m.iv, m.ciphertext, aad(c.id, m.senderId, m.id));
-        return { ...base, payload: normalizePayload(raw) };
+        const res: ChatMessage = { ...base, payload: normalizePayload(raw) };
+        decryptedCache.current.set(cacheKey, res);
+        return res;
       } catch {
         return { ...base, payload: null };
       }
@@ -195,29 +374,39 @@ export function useChat(session: Session, prefs: Prefs) {
           text = m.deleted ? "Mesaj silindi" : m.payload ? previewOf(m.payload) : "Şifresi çözülemeyen mesaj";
         }
       }
-      setPreviews((p) => (p[c.id] === text ? p : { ...p, [c.id]: text }));
+      setPreviews((p) => {
+        if (p[c.id] === text) return p;
+        const next = { ...p, [c.id]: text };
+        previewsRef.current = next;
+        scheduleSnapshotSave();
+        return next;
+      });
       return text;
     },
-    [openWire],
+    [openWire, scheduleSnapshotSave],
   );
 
-  const rebuildVisibleThread = useCallback((convId: string, rawList: ChatMessage[], meta?: Partial<Thread>) => {
-    rawMessagesRef.current[convId] = rawList;
-    const cleared = clearedSeqRef.current[convId] ?? 0;
-    const visible = foldThreadMessages(rawList, hiddenRef.current, cleared);
-    setThreads((prev) => {
-      const cur = prev[convId] ?? EMPTY_THREAD;
-      return {
-        ...prev,
-        [convId]: {
+  const rebuildVisibleThread = useCallback(
+    (convId: string, rawList: ChatMessage[], meta?: Partial<Thread>) => {
+      rawMessagesRef.current[convId] = rawList;
+      const cleared = clearedSeqRef.current[convId] ?? 0;
+      const visible = foldThreadMessages(rawList, hiddenRef.current, cleared);
+      setThreads((prev) => {
+        const cur = prev[convId] ?? EMPTY_THREAD;
+        const nextThread: Thread = {
           messages: visible,
           hasMore: meta?.hasMore ?? cur.hasMore,
           loaded: meta?.loaded ?? cur.loaded,
           loadingOlder: meta?.loadingOlder ?? cur.loadingOlder,
-        },
-      };
-    });
-  }, []);
+        };
+        const next = { ...prev, [convId]: nextThread };
+        threadsRef.current = next;
+        return next;
+      });
+      scheduleSnapshotSave();
+    },
+    [scheduleSnapshotSave],
+  );
 
   const refreshThread = useCallback(
     async (c: ConvSummary) => {
@@ -247,6 +436,8 @@ export function useChat(session: Session, prefs: Prefs) {
     (id: string | null) => {
       activeRef.current = id;
       setActiveId(id);
+      writeLocalJson(`${storagePrefix}:activeId`, id);
+      scheduleSnapshotSave();
       if (id) {
         setMarkedUnread((prev) => {
           if (!prev[id]) return prev;
@@ -259,15 +450,28 @@ export function useChat(session: Session, prefs: Prefs) {
         if (c) void refreshThread(c);
       }
     },
-    [refreshThread, storagePrefix],
+    [refreshThread, scheduleSnapshotSave, storagePrefix],
   );
+
+  // Trigger initial refresh for restored active conversation once convs are available
+  const initialActiveSynced = useRef(false);
+  useEffect(() => {
+    if (initialActiveSynced.current || !activeId || !convs?.length) return;
+    const c = convs.find((x) => x.id === activeId);
+    if (c) {
+      initialActiveSynced.current = true;
+      void refreshThread(c);
+    }
+  }, [activeId, convs, refreshThread]);
 
   const announce = useCallback(
     async (c: ConvSummary) => {
       if (mutedRef.current[c.id]) return;
       const p = prefsRef.current;
       if (p.sound) blip();
-      if (!p.notifications || document.visibilityState === "visible") return;
+      if (!p.notifications) return;
+      const isAndroid = typeof window !== "undefined" && Boolean(window.KuytuAndroid);
+      if (!isAndroid && document.visibilityState === "visible") return;
       const isRequest = c.status === "pending";
       let body = isRequest ? "Yeni mesaj isteği" : "Yeni mesaj";
       if (p.notifPreview && !isRequest) {
@@ -299,10 +503,13 @@ export function useChat(session: Session, prefs: Prefs) {
     }
 
     convsRef.current = list;
+    meRef.current = res.me;
+    featuresRef.current = res.features;
     setMe((prev) => (prev && same(prev, res.me) ? prev : res.me));
     setFeatures((prev) => (same(prev, res.features) ? prev : res.features));
     setConvs((prev) => (prev && same(prev, list) ? prev : list));
     setConnected(true);
+    scheduleSnapshotSave();
 
     const first = firstSync.current;
     firstSync.current = false;
@@ -332,7 +539,7 @@ export function useChat(session: Session, prefs: Prefs) {
     }
 
     if (active && !list.some((c) => c.id === active)) setActive(null);
-  }, [announce, describeLast, refreshThread, session.userId, setActive]);
+  }, [announce, describeLast, refreshThread, scheduleSnapshotSave, session.userId, setActive]);
 
   useEffect(() => {
     let stopped = false;
@@ -348,7 +555,7 @@ export function useChat(session: Session, prefs: Prefs) {
         if (!(e instanceof ApiError) || e.status !== 401) setConnected(false);
       }
       running = false;
-      if (!stopped) timer = setTimeout(tick, document.visibilityState === "visible" ? 2000 : 10000);
+      if (!stopped) timer = setTimeout(tick, document.visibilityState === "visible" ? 2000 : 8000);
     };
     const now = () => {
       if (timer) clearTimeout(timer);
@@ -386,6 +593,15 @@ export function useChat(session: Session, prefs: Prefs) {
           json: { id, iv: sealed.iv, ciphertext: sealed.ciphertext },
         });
         retries.current.delete(id);
+        const finalized: ChatMessage = {
+          id,
+          seq: res.message.seq,
+          senderId: session.userId,
+          createdAt: res.message.createdAt,
+          deleted: false,
+          payload,
+        };
+        decryptedCache.current.set(`${id}|0`, finalized);
         patchRaw((m) => ({
           ...m,
           payload,
@@ -395,7 +611,11 @@ export function useChat(session: Session, prefs: Prefs) {
           error: undefined,
         }));
         if (payload.t !== "react" || payload.emoji) {
-          setPreviews((p) => ({ ...p, [c.id]: previewOf(payload) }));
+          setPreviews((p) => {
+            const next = { ...p, [c.id]: previewOf(payload) };
+            previewsRef.current = next;
+            return next;
+          });
         }
         kick.current();
       } catch (e) {
@@ -559,6 +779,7 @@ export function useChat(session: Session, prefs: Prefs) {
   const deleteMessage = useCallback(
     async (convId: string, id: string) => {
       await api(`/api/conversations/${convId}/messages?messageId=${id}`, { method: "DELETE" });
+      decryptedCache.current.delete(`${id}|0`);
       const curRaw = rawMessagesRef.current[convId] ?? [];
       rebuildVisibleThread(
         convId,
@@ -593,7 +814,11 @@ export function useChat(session: Session, prefs: Prefs) {
       clearedSeqRef.current = { ...clearedSeqRef.current, [convId]: maxSeq };
       writeLocalJson(`${storagePrefix}:cleared`, clearedSeqRef.current);
       rebuildVisibleThread(convId, curRaw, { hasMore: false });
-      setPreviews((p) => ({ ...p, [convId]: "" }));
+      setPreviews((p) => {
+        const next = { ...p, [convId]: "" };
+        previewsRef.current = next;
+        return next;
+      });
     },
     [rebuildVisibleThread, storagePrefix],
   );
@@ -784,6 +1009,7 @@ export function useChat(session: Session, prefs: Prefs) {
 
   const updateMe = useCallback(async (patch: Record<string, unknown>) => {
     const res = await api<{ me: Me }>("/api/me", { method: "PATCH", json: patch });
+    meRef.current = res.me;
     setMe(res.me);
     return res.me;
   }, []);

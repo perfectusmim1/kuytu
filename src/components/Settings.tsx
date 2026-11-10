@@ -6,7 +6,7 @@ import { InviteLink } from "./Dialogs";
 import { Avatar, ConfirmButton, Dialog, Segmented, Switch } from "./ui";
 import { deriveCredentials, rewrapIdentity } from "@/lib/crypto";
 import { cx, errText } from "@/lib/format";
-import { askNoticePermission, noticeState } from "@/lib/notify";
+import { askNoticePermission, getAndroidBridge, noticeState } from "@/lib/notify";
 import type { Prefs } from "@/lib/prefs";
 import type { BlockedUser, Me, WhoCanRequest } from "@/lib/types";
 import type { Chat } from "@/lib/useChat";
@@ -202,73 +202,177 @@ function DeleteAccount({ me, onDeleted }: { me: Me; onDeleted: () => void }) {
   );
 }
 
-function AppUpdateSection() {
-  const currentVersion = "v1.0.1";
+type ApkProgressState = {
+  status: "idle" | "downloading" | "installing" | "permission" | "error";
+  percent: number;
+  message?: string;
+};
+
+function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
+  const android = getAndroidBridge();
+  const isLegacyApk =
+    typeof window !== "undefined" &&
+    !android &&
+    (Boolean((window as unknown as { Capacitor?: unknown }).Capacitor) || /\bwv\b/i.test(navigator.userAgent));
+  const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.2");
+  const currentVersion = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
+
   const [latestTag, setLatestTag] = useState<string | null>(null);
   const [apkUrl, setApkUrl] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [apkProgress, setApkProgress] = useState<ApkProgressState>({ status: "idle", percent: 0 });
+
+  const checkUpdates = async (manual = false) => {
+    if (checking) return;
+    setChecking(true);
+    try {
+      const res = await fetch("https://api.github.com/repos/perfectusmim1/kuytu/releases/latest", {
+        cache: "no-store",
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as {
+        tag_name?: string;
+        assets?: Array<{ name?: string; browser_download_url?: string }>;
+      };
+      const tag = data.tag_name || null;
+      setLatestTag(tag);
+      const apkAsset = data.assets?.find((a) => a.name?.endsWith(".apk"));
+      if (apkAsset?.browser_download_url) {
+        setApkUrl(apkAsset.browser_download_url);
+      }
+      if (manual) {
+        if (tag && tag !== currentVersion) {
+          onToast(`Yeni sürüm bulundu: ${tag}`);
+        } else {
+          onToast("Uygulama güncel.");
+        }
+      }
+    } catch {
+      if (manual) {
+        onToast("Güncelleme denetlenemedi. Bağlantını kontrol et.");
+      }
+    } finally {
+      setChecking(false);
+    }
+  };
 
   useEffect(() => {
-    let active = true;
-    fetch("https://api.github.com/repos/perfectusmim1/kuytu/releases/latest")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!active || !data) return;
-        setLatestTag(data.tag_name || null);
-        const apkAsset = data.assets?.find(
-          (a: { name?: string; browser_download_url?: string }) => a.name?.endsWith(".apk")
-        );
-        if (apkAsset?.browser_download_url) {
-          setApkUrl(apkAsset.browser_download_url);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
+    void checkUpdates(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const onProgress = (e: Event) => {
+      const detail = (e as CustomEvent<ApkProgressState>).detail;
+      if (!detail) return;
+      setApkProgress({
+        status: detail.status,
+        percent: typeof detail.percent === "number" ? detail.percent : 0,
+        message: detail.message,
+      });
+      if (detail.status === "error" && detail.message) {
+        onToast(detail.message);
+      }
+    };
+    window.addEventListener("kuytu:apk-progress", onProgress);
+    return () => window.removeEventListener("kuytu:apk-progress", onProgress);
+  }, [onToast]);
+
   const hasUpdate = Boolean(latestTag && latestTag !== currentVersion);
+  const targetApkUrl = apkUrl || "https://github.com/perfectusmim1/kuytu/releases/latest/download/kuytu.apk";
+  const isDownloading = apkProgress.status === "downloading" || apkProgress.status === "installing";
+
+  const triggerInstall = () => {
+    const bridge = getAndroidBridge();
+    if (bridge?.downloadAndInstallApk) {
+      setApkProgress({ status: "downloading", percent: 0 });
+      bridge.downloadAndInstallApk(targetApkUrl);
+      return;
+    }
+    window.location.href = targetApkUrl;
+  };
 
   return (
     <Section title="Uygulama & Güncellemeler">
-      <div className="grid gap-2 text-sm">
+      <div className="grid gap-2.5 text-sm">
         <div className="flex items-center justify-between py-1">
           <span className="text-muted">Mevcut sürüm</span>
           <span className="font-mono text-xs text-ink/90">{currentVersion}</span>
         </div>
-        {hasUpdate ? (
-          <div className="rounded-xl border border-accent/40 bg-accent/10 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-medium text-accent">Yeni sürüm yayınlandı</div>
-                <div className="truncate text-xs text-muted">{latestTag}</div>
-              </div>
-              <a
-                href={apkUrl || `https://github.com/perfectusmim1/kuytu/releases/tag/${latestTag}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-sm shrink-0 bg-accent text-accent-fg"
-              >
-                <Download size={14} aria-hidden />
-                Güncelle
-              </a>
+        <div className="flex items-center justify-between py-1">
+          <span className="text-muted">Durum</span>
+          {hasUpdate ? (
+            <span className="text-xs font-medium text-accent">Yeni sürüm mevcut ({latestTag})</span>
+          ) : (
+            <span className="text-xs text-emerald-400">En güncel sürüm</span>
+          )}
+        </div>
+
+        {apkProgress.status !== "idle" ? (
+          <div className="rounded-xl border border-line bg-sunken/70 p-3">
+            <div className="mb-1.5 flex items-center justify-between text-xs">
+              <span className="font-medium text-ink">
+                {apkProgress.status === "downloading" && "Güncelleme indiriliyor…"}
+                {apkProgress.status === "installing" && "Kurulum ekranı açılıyor…"}
+                {apkProgress.status === "permission" && "Bilinmeyen kaynak izni bekleniyor…"}
+                {apkProgress.status === "error" && (apkProgress.message || "İndirme başarısız oldu")}
+              </span>
+              {apkProgress.status === "downloading" ? (
+                <span className="font-mono text-muted">%{apkProgress.percent}</span>
+              ) : null}
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+              <div
+                className={cx(
+                  "h-full transition-all duration-200",
+                  apkProgress.status === "error" ? "bg-danger" : "bg-accent",
+                )}
+                style={{
+                  width: `${
+                    apkProgress.status === "installing"
+                      ? 100
+                      : apkProgress.status === "permission"
+                        ? 25
+                        : Math.max(4, apkProgress.percent)
+                  }%`,
+                }}
+              />
             </div>
           </div>
-        ) : (
-          <div className="flex items-center justify-between py-1">
-            <span className="text-muted">Durum</span>
-            <span className="text-xs text-emerald-400">En güncel sürüm</span>
-          </div>
-        )}
-        <a
-          href={apkUrl || "https://github.com/perfectusmim1/kuytu/releases/latest/download/kuytu.apk"}
-          target="_blank"
-          rel="noopener noreferrer"
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => void checkUpdates(true)}
+          disabled={checking || isDownloading}
           className="btn btn-quiet w-full justify-center"
         >
-          <Download size={15} aria-hidden />
-          Android APK’sını İndir
-        </a>
+          <RefreshCw size={15} className={cx(checking && "animate-spin")} aria-hidden />
+          {checking ? "Denetleniyor…" : "Güncellemeleri denetle"}
+        </button>
+
+        {hasUpdate ? (
+          <button
+            type="button"
+            onClick={triggerInstall}
+            disabled={isDownloading}
+            className="btn w-full justify-center bg-accent text-accent-fg"
+          >
+            {isDownloading ? <LoaderCircle size={15} className="animate-spin" aria-hidden /> : <Download size={15} aria-hidden />}
+            {android ? `Uygulama İçinde Güncelle (${latestTag})` : `Güncellemeyi İndir (${latestTag})`}
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={triggerInstall}
+            disabled={isDownloading}
+            className="btn btn-quiet w-full justify-center"
+          >
+            <Download size={15} aria-hidden />
+            {android ? "APK’yı Uygulama İçinde İndir ve Kur" : "Android APK’sını İndir"}
+          </button>
+        )}
       </div>
     </Section>
   );
@@ -327,9 +431,22 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
       return;
     }
     const state = await askNoticePermission();
-    if (state === "granted") setPrefs({ notifications: true });
-    else if (state === "unsupported") onToast("Bu tarayıcı bildirimleri desteklemiyor.");
-    else onToast("Bildirim izni verilmedi. Tarayıcının site ayarlarından açabilirsin.");
+    if (state === "granted") {
+      setPrefs({ notifications: true });
+      onToast("Bildirimler açıldı.");
+    } else if (state === "unsupported") {
+      const isLegacyWebView =
+        typeof window !== "undefined" &&
+        !getAndroidBridge() &&
+        (Boolean((window as unknown as { Capacitor?: unknown }).Capacitor) || /\bwv\b/i.test(navigator.userAgent));
+      if (isLegacyWebView) {
+        onToast("Mobil bildirimler için lütfen aşağıdan uygulamayı v1.0.2 sürümüne güncelleyin.");
+      } else {
+        onToast("Bildirim izni alınamadı. Cihaz veya uygulama ayarlarından bildirimleri açabilirsin.");
+      }
+    } else {
+      onToast("Bildirim izni verilmedi. Cihaz veya uygulama ayarlarından bildirimlere izin verebilirsin.");
+    }
   };
 
   const notificationsOn = prefs.notifications && noticeState() === "granted";
@@ -436,8 +553,8 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
       <Section title="Bildirimler">
         <div className="divide-y divide-line">
           <Switch
-            label="Sistem bildirimleri"
-            hint="Uygulama arka plandayken yeni mesajı bildirir. Uygulama tamamen kapalıyken bildirim gelmez."
+            label="Anlık bildirimler"
+            hint="Yeni mesaj geldiğinde cihazına bildirim gönderir."
             checked={notificationsOn}
             onChange={(v) => void toggleNotifications(v)}
           />
@@ -556,7 +673,7 @@ export default function Settings({ chat, me, prefs, setPrefs, onClose, onSignOut
         </div>
       </Section>
 
-      <AppUpdateSection />
+      <AppUpdateSection onToast={onToast} />
 
       <Section title="Hesap">
         <div className="grid gap-2">

@@ -14,15 +14,35 @@ const src = (v: ArrayBuffer | Uint8Array) => v as BufferSource;
 const memory = new Map<string, unknown>();
 const DEVICE_KEY_NAME = "__device_key__";
 
+let dbInstancePromise: Promise<IDBDatabase> | null = null;
+
 function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open("kuytu", 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore("kv");
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+  if (!dbInstancePromise) {
+    dbInstancePromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open("kuytu", 1);
+      req.onupgradeneeded = () => {
+        if (!req.result.objectStoreNames.contains("kv")) {
+          req.result.createObjectStore("kv");
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onversionchange = () => {
+          db.close();
+          dbInstancePromise = null;
+        };
+        db.onclose = () => {
+          dbInstancePromise = null;
+        };
+        resolve(db);
+      };
+      req.onerror = () => {
+        dbInstancePromise = null;
+        reject(req.error);
+      };
+    });
+  }
+  return dbInstancePromise;
 }
 
 async function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
@@ -31,11 +51,9 @@ async function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
     const tx = db.transaction("kv", mode);
     const req = fn(tx.objectStore("kv"));
     tx.oncomplete = () => {
-      db.close();
       resolve(req.result);
     };
     const onFail = () => {
-      db.close();
       reject(tx.error);
     };
     tx.onerror = onFail;
@@ -44,8 +62,11 @@ async function run<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => I
 }
 
 async function kvGet<T>(key: string): Promise<T | undefined> {
+  if (memory.has(key)) return memory.get(key) as T | undefined;
   try {
-    return (await run<T | undefined>("readonly", (s) => s.get(key))) ?? (memory.get(key) as T | undefined);
+    const val = await run<T | undefined>("readonly", (s) => s.get(key));
+    if (val !== undefined) memory.set(key, val);
+    return val;
   } catch {
     return memory.get(key) as T | undefined;
   }
@@ -82,7 +103,7 @@ function getDeviceKey(): Promise<CryptoKey> {
   return deviceKeyPromise;
 }
 
-async function sealLocal(slot: string, value: unknown): Promise<string> {
+export async function sealLocal(slot: string, value: unknown): Promise<string> {
   const key = await getDeviceKey();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plain = te.encode(JSON.stringify(value));
@@ -95,7 +116,7 @@ async function sealLocal(slot: string, value: unknown): Promise<string> {
   return `${toB64(iv)}.${toB64(ct)}`;
 }
 
-async function unsealLocal<T>(slot: string, sealed: string): Promise<T | null> {
+export async function unsealLocal<T>(slot: string, sealed: string): Promise<T | null> {
   try {
     const [ivB64, ctB64, extra] = sealed.split(".");
     if (extra || !ivB64 || !ctB64) return null;
@@ -153,10 +174,42 @@ export async function saveSession(s: Session): Promise<void> {
 export async function wipeVault(): Promise<void> {
   memory.clear();
   deviceKeyPromise = null;
+  wireChannelPromise = null;
+  try {
+    if (typeof window !== "undefined") {
+      for (const k of Object.keys(window.sessionStorage)) {
+        if (k.startsWith("kuytu:")) window.sessionStorage.removeItem(k);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
   try {
     await run("readwrite", (s) => s.clear());
   } catch {
     /* nothing persisted */
+  }
+}
+
+/** Save device-encrypted chat snapshot in IndexedDB so cold starts hydrate without waiting for network. */
+export async function saveEncryptedSnapshot(userId: string, snapshot: unknown): Promise<void> {
+  try {
+    const slot = `snapshot:${userId}`;
+    const sealed = await sealLocal(slot, snapshot);
+    await kvSet(slot, sealed);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function loadEncryptedSnapshot<T>(userId: string): Promise<T | null> {
+  try {
+    const slot = `snapshot:${userId}`;
+    const raw = await kvGet<string>(slot);
+    if (!raw || typeof raw !== "string") return null;
+    return await unsealLocal<T>(slot, raw);
+  } catch {
+    return null;
   }
 }
 
@@ -170,7 +223,6 @@ export async function checkPin(userId: string, publicKey: string): Promise<"new"
   }
   const unsealed = await unsealLocal<string>(slot, raw);
   if (!unsealed) {
-    // If legacy unsealed pin or corrupted entry, re-seal cleanly if matches or flag changed
     if (raw === publicKey) {
       await kvSet(slot, await sealLocal(slot, publicKey));
       return "ok";
@@ -193,13 +245,46 @@ type WireChannel = {
   expiresAt: number;
 };
 
+type StoredWireChannel = {
+  sealedHid: string;
+  key: CryptoKey;
+  expiresAt: number;
+};
+
 let wireChannelPromise: Promise<WireChannel> | null = null;
 
 function randomNonce(): string {
   return toB64(crypto.getRandomValues(new Uint8Array(16)));
 }
 
-async function negotiateWireChannel(): Promise<WireChannel> {
+async function loadStoredWireChannel(): Promise<WireChannel | null> {
+  try {
+    const stored = await kvGet<StoredWireChannel>("wireChannel");
+    if (!stored?.key || !stored.sealedHid || typeof stored.expiresAt !== "number") return null;
+    if (stored.expiresAt < Date.now() + 60_000) return null;
+    const hid = await unsealLocal<string>("wireChannel", stored.sealedHid);
+    if (!hid) return null;
+    return { hid, key: stored.key, expiresAt: stored.expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+async function saveStoredWireChannel(ch: WireChannel): Promise<void> {
+  try {
+    const sealedHid = await sealLocal("wireChannel", ch.hid);
+    await kvSet("wireChannel", { sealedHid, key: ch.key, expiresAt: ch.expiresAt } satisfies StoredWireChannel);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function negotiateWireChannel(skipCache = false): Promise<WireChannel> {
+  if (!skipCache) {
+    const cached = await loadStoredWireChannel();
+    if (cached) return cached;
+  }
+
   const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
   const clientPub = toB64(await crypto.subtle.exportKey("raw", pair.publicKey));
 
@@ -233,17 +318,22 @@ async function negotiateWireChannel(): Promise<WireChannel> {
     ["encrypt", "decrypt"],
   );
 
-  return {
+  const channel: WireChannel = {
     hid: data.hid,
     key,
     expiresAt: Date.now() + 11 * 3600_000,
   };
+  void saveStoredWireChannel(channel);
+  return channel;
 }
 
 function getWireChannel(forceRefresh = false): Promise<WireChannel> {
-  if (forceRefresh) wireChannelPromise = null;
+  if (forceRefresh) {
+    wireChannelPromise = null;
+    memory.delete("wireChannel");
+  }
   if (!wireChannelPromise) {
-    wireChannelPromise = negotiateWireChannel().catch((err) => {
+    wireChannelPromise = negotiateWireChannel(forceRefresh).catch((err) => {
       wireChannelPromise = null;
       throw err;
     });

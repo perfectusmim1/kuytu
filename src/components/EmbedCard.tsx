@@ -4,7 +4,7 @@ import { ExternalLink, LoaderCircle, Play } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import { EMBED_DOMAIN, EMBED_NAME, embedFrame, type Embed } from "@/lib/embeds";
 import { cx } from "@/lib/format";
-import { loadProxiedVideo, resolveSocial, type ResolvedSocial } from "@/lib/media";
+import { getCachedSocial, loadProxiedVideo, resolveSocial, type ResolvedSocial } from "@/lib/media";
 
 export type FrameEmbed = Exclude<Embed, { kind: "image" }>;
 
@@ -42,8 +42,8 @@ export const EmbedCard = memo(function EmbedCard({
   onImage?: (src: string) => void;
 }) {
   const [armed, setArmed] = useState(auto);
-  const [meta, setMeta] = useState<ResolvedSocial | null>(null);
-  const [loadingMeta, setLoadingMeta] = useState(auto);
+  const [meta, setMeta] = useState<ResolvedSocial | null>(() => getCachedSocial(embed.url));
+  const [loadingMeta, setLoadingMeta] = useState(() => auto && !getCachedSocial(embed.url));
   const [playing, setPlaying] = useState(false);
   const [videoSrc, setVideoSrc] = useState<string | null>(null);
   const [loadingVideo, setLoadingVideo] = useState(false);
@@ -60,6 +60,12 @@ export const EmbedCard = memo(function EmbedCard({
 
   useEffect(() => {
     if (!armed) return;
+    const cached = getCachedSocial(embed.url);
+    if (cached) {
+      setMeta(cached);
+      setLoadingMeta(false);
+      return;
+    }
     let live = true;
     setLoadingMeta(true);
     resolveSocial(embed.url)

@@ -8,7 +8,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data: https://*.giphy.com https://i.imgur.com https://flagcdn.com",
   "font-src 'self' data:",
-  `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
+  `connect-src 'self' https://api.github.com${isDev ? " ws: wss:" : ""}`,
   "media-src 'self' blob:",
   "frame-src https://www.tiktok.com https://www.instagram.com https://platform.twitter.com https://www.youtube-nocookie.com https://open.spotify.com",
   "worker-src 'self'",
