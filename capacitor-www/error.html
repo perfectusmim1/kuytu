@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#121110" />
+    <title>Kuytu</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #121110;
+        color: #ede8df;
+        font-family: system-ui, -apple-system, Roboto, sans-serif;
+        overflow: hidden;
+      }
+      main {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 28px;
+        box-sizing: border-box;
+      }
+      .wordmark {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 42px;
+        letter-spacing: -0.02em;
+        margin: 0 0 12px;
+      }
+      .dot { color: #ff7a45; }
+      p {
+        color: #a59e92;
+        max-width: 320px;
+        font-size: 14px;
+        line-height: 1.5;
+        margin: 0 0 22px;
+      }
+      .btn {
+        background: #ff7a45;
+        color: #1d0d05;
+        border: 0;
+        border-radius: 14px;
+        padding: 13px 22px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 class="wordmark">Kuytu<span class="dot">.</span></h1>
+      <p>Sunucuya ulaşılamadı. Sunucunun açık olduğundan emin olup tekrar dene.</p>
+      <button class="btn" onclick="location.replace('http://localhost:3000')">Tekrar bağlan</button>
+    </main>
+  </body>
+</html>

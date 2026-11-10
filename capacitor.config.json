@@ -1,0 +1,15 @@
+{
+  "appId": "app.kuytu.messenger",
+  "appName": "Kuytu",
+  "webDir": "capacitor-www",
+  "server": {
+    "url": "http://localhost:3000",
+    "cleartext": true,
+    "errorPath": "error.html"
+  },
+  "android": {
+    "backgroundColor": "#121110",
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}

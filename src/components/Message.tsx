@@ -1,0 +1,1085 @@
+"use client";
+
+import {
+  Ban,
+  Check,
+  CheckCheck,
+  CircleAlert,
+  Clock,
+  Copy,
+  CornerUpRight,
+  Ellipsis,
+  ImageOff,
+  LoaderCircle,
+  LockKeyhole,
+  Pin,
+  PinOff,
+  Reply,
+  SquareCheck,
+  Star,
+  Trash2,
+} from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
+import { EmbedCard } from "./EmbedCard";
+import { parseEmbed, splitText, type Embed } from "@/lib/embeds";
+import { clock, cx } from "@/lib/format";
+import { loadEncryptedMedia } from "@/lib/media";
+import type { ChatMessage, Payload, ReplyRef } from "@/lib/types";
+
+type Receipt = "sent" | "seen" | null;
+
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
+
+export type RowProps = {
+  m: ChatMessage;
+  convId: string;
+  meId: string;
+  peerName: string;
+  mine: boolean;
+  head: boolean;
+  tail: boolean;
+  receipt: Receipt;
+  seenLabel: boolean;
+  starred: boolean;
+  pinned: boolean;
+  selectMode: boolean;
+  selected: boolean;
+  autoEmbeds: boolean;
+  dark: boolean;
+  onToggleSelect: (id: string) => void;
+  onStartSelect: (id: string) => void;
+  onReply: (m: ChatMessage) => void;
+  onReact: (id: string, emoji: string) => void;
+  onForward: (m: ChatMessage) => void;
+  onToggleStar: (id: string) => void;
+  onTogglePin: (id: string) => void;
+  onPromptDelete: (ids: string[]) => void;
+  onCopyText: (text: string) => void;
+  onJump: (id: string) => void;
+  onRetry: (id: string) => void;
+  onDiscard: (convId: string, id: string) => void;
+  onImage: (src: string) => void;
+};
+
+let EMOJI_ONLY: RegExp | null = null;
+try {
+  EMOJI_ONLY = new RegExp(
+    "^(?:\\p{Extended_Pictographic}|\\p{Emoji_Modifier}|\\p{Regional_Indicator}|\\u200d|\\ufe0f|\\s)+$",
+    "u",
+  );
+} catch {
+  EMOJI_ONLY = null;
+}
+
+function Meta({
+  m,
+  receipt,
+  starred,
+  pinned,
+  tone,
+}: {
+  m: ChatMessage;
+  receipt: Receipt;
+  starred?: boolean;
+  pinned?: boolean;
+  tone: "own" | "peer" | "overlay";
+}) {
+  const color = tone === "own" ? "text-own-muted" : tone === "peer" ? "text-muted" : "text-white";
+  return (
+    <span className={cx("flex select-none items-center gap-1 whitespace-nowrap text-[11px] leading-none", color)}>
+      {pinned ? <Pin size={10} className="rotate-45 opacity-85" aria-label="Sabitlendi" /> : null}
+      {starred ? <Star size={10} className="fill-current opacity-85" aria-label="Yıldızlı" /> : null}
+      {clock(m.createdAt)}
+      {m.state === "sending" ? <Clock size={12} aria-label="Gönderiliyor" /> : null}
+      {m.state === "failed" ? <CircleAlert size={12} aria-label="Gönderilemedi" /> : null}
+      {receipt === "sent" ? <Check size={14} aria-label="Gönderildi" /> : null}
+      {receipt === "seen" ? (
+        <CheckCheck size={14} className={tone === "own" ? "text-own-accent" : "text-[#ff8a57]"} aria-label="Görüldü" />
+      ) : null}
+    </span>
+  );
+}
+
+function ForwardedTag({ inOwnBubble }: { inOwnBubble: boolean }) {
+  return (
+    <span
+      className={cx(
+        "mb-1 flex items-center gap-1 text-[11px] italic",
+        inOwnBubble ? "text-own-muted" : "text-muted",
+      )}
+    >
+      <CornerUpRight size={12} aria-hidden />
+      İletildi
+    </span>
+  );
+}
+
+function ReplyQuote({
+  reply,
+  meId,
+  peerName,
+  inOwnBubble,
+  onJump,
+}: {
+  reply: ReplyRef;
+  meId: string;
+  peerName: string;
+  inOwnBubble: boolean;
+  onJump: (id: string) => void;
+}) {
+  const isMe = reply.senderId === meId;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onJump(reply.id);
+      }}
+      className={cx(
+        "mb-1.5 flex w-full min-w-[140px] max-w-full flex-col rounded-xl border-l-[3px] px-2.5 py-1.5 text-left text-xs leading-snug transition-opacity hover:opacity-90",
+        inOwnBubble
+          ? "border-[#ff7a45] bg-[#161311] text-[#ede8df]"
+          : "border-accent bg-[#121110]/90 text-[#ede8df]",
+      )}
+    >
+      <span className="truncate font-semibold text-[#ff7a45]">
+        {isMe ? "Sen" : peerName}
+      </span>
+      <span className="mt-0.5 truncate text-[#b5aea2]">{reply.text}</span>
+    </button>
+  );
+}
+
+function MediaFrame({ w, h, max, children }: { w: number; h: number; max: number; children: ReactNode }) {
+  const ratio = Math.min(2.2, Math.max(0.5, w / h));
+  const width = Math.round(Math.min(max, Math.max(150, w)));
+  return (
+    <div
+      className="relative overflow-hidden rounded-[18px] border border-line bg-sunken"
+      style={{ width, maxWidth: "100%", aspectRatio: String(ratio) }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ImageBlock({
+  m,
+  p,
+  receipt,
+  starred,
+  pinned,
+  onImage,
+}: {
+  m: ChatMessage;
+  p: Extract<Payload, { t: "image" }>;
+  receipt: Receipt;
+  starred: boolean;
+  pinned: boolean;
+  onImage: (src: string) => void;
+}) {
+  const [src, setSrc] = useState<string | null>(m.localUrl ?? null);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const k = p.enc?.k;
+  const iv = p.enc?.iv;
+  const mime = p.enc?.mime;
+
+  useEffect(() => {
+    if (m.localUrl) {
+      setSrc(m.localUrl);
+      return;
+    }
+    if (!p.url) return;
+    if (!k || !iv || !mime) {
+      setSrc(p.url);
+      return;
+    }
+    let live = true;
+    loadEncryptedMedia(p.url, { k, iv, mime })
+      .then((u) => {
+        if (live) setSrc(u);
+      })
+      .catch(() => {
+        if (live) setError(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [m.localUrl, p.url, k, iv, mime, attempt]);
+
+  return (
+    <MediaFrame w={p.w} h={p.h} max={280}>
+      {error ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 p-3 text-center text-xs text-muted">
+          <ImageOff size={20} aria-hidden />
+          Fotoğraf yüklenemedi
+          <button
+            type="button"
+            className="font-semibold text-ink underline underline-offset-2"
+            onClick={(e) => {
+              e.stopPropagation();
+              setError(false);
+              setAttempt((a) => a + 1);
+            }}
+          >
+            Tekrar dene
+          </button>
+        </div>
+      ) : src ? (
+        <button
+          type="button"
+          className="absolute inset-0 block h-full w-full cursor-zoom-in"
+          onClick={(e) => {
+            e.stopPropagation();
+            onImage(src);
+          }}
+          aria-label="Fotoğrafı büyüt"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt="Gönderilen fotoğraf"
+            className="h-full w-full object-cover"
+            referrerPolicy="no-referrer"
+            draggable={false}
+            onError={() => setError(true)}
+          />
+        </button>
+      ) : (
+        <div className="skeleton absolute inset-0" aria-label="Fotoğraf çözülüyor" />
+      )}
+      {m.state === "sending" ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35 text-white">
+          <span className="flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs font-medium">
+            <LoaderCircle size={14} className="animate-spin" aria-hidden />
+            Şifrelenip yükleniyor
+          </span>
+        </div>
+      ) : null}
+      <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/55 px-2 py-1">
+        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+      </span>
+    </MediaFrame>
+  );
+}
+
+function GifBlock({
+  m,
+  p,
+  receipt,
+  starred,
+  pinned,
+  auto,
+}: {
+  m: ChatMessage;
+  p: Extract<Payload, { t: "gif" }>;
+  receipt: Receipt;
+  starred: boolean;
+  pinned: boolean;
+  auto: boolean;
+}) {
+  const [armed, setArmed] = useState(auto);
+  useEffect(() => {
+    if (auto) setArmed(true);
+  }, [auto]);
+
+  return (
+    <MediaFrame w={p.w} h={p.h} max={260}>
+      {armed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.url} alt="GIF" loading="lazy" referrerPolicy="no-referrer" className="h-full w-full object-cover" />
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setArmed(true);
+          }}
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-sm font-semibold"
+        >
+          GIF’i göster
+          <span className="text-xs font-normal text-muted">GIPHY’den yüklenir</span>
+        </button>
+      )}
+      <span className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/55 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-white">
+        GIF
+      </span>
+      <span className="pointer-events-none absolute bottom-2 right-2 rounded-full bg-black/55 px-2 py-1">
+        <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="overlay" />
+      </span>
+    </MediaFrame>
+  );
+}
+
+/** A GIPHY or Imgur link pasted as text: shown inline, from allow-listed hosts only. */
+function LinkImage({ src, auto, onImage }: { src: string; auto: boolean; onImage: (src: string) => void }) {
+  const [armed, setArmed] = useState(auto);
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    if (auto) setArmed(true);
+  }, [auto]);
+  if (broken) return null;
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setArmed(true);
+        }}
+        className="btn btn-quiet btn-sm mb-1.5"
+      >
+        Görseli göster
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onImage(src);
+      }}
+      className="mb-1.5 block overflow-hidden rounded-xl border border-line bg-sunken"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt="Paylaşılan görsel"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setBroken(true)}
+        className="block max-h-64 w-[256px] max-w-full object-contain"
+      />
+    </button>
+  );
+}
+
+function TextBlock({
+  m,
+  body,
+  reply,
+  forwarded,
+  meId,
+  peerName,
+  mine,
+  tail,
+  receipt,
+  starred,
+  pinned,
+  autoEmbeds,
+  dark,
+  onJump,
+  onImage,
+}: {
+  m: ChatMessage;
+  body: string;
+  reply?: ReplyRef;
+  forwarded?: boolean;
+  meId: string;
+  peerName: string;
+  mine: boolean;
+  tail: boolean;
+  receipt: Receipt;
+  starred: boolean;
+  pinned: boolean;
+  autoEmbeds: boolean;
+  dark: boolean;
+  onJump: (id: string) => void;
+  onImage: (src: string) => void;
+}) {
+  const { visibleParts, hasVisibleText, embeds, emoji } = useMemo(() => {
+    const parts = splitText(body);
+    const seen = new Set<string>();
+    const embeds: Embed[] = [];
+    const embedUrls = new Set<string>();
+    for (const part of parts) {
+      if (!part.link || seen.has(part.value) || embeds.length >= 2) continue;
+      seen.add(part.value);
+      const e = parseEmbed(part.value);
+      if (e) {
+        embeds.push(e);
+        embedUrls.add(part.value);
+      }
+    }
+    const filtered = parts.filter((part) => !(part.link && embedUrls.has(part.value)));
+    const cleaned = filtered
+      .map((part, idx) => {
+        if (part.link) return part;
+        let val = part.value;
+        if (idx === 0) val = val.replace(/^\s+/, "");
+        if (idx === filtered.length - 1) val = val.replace(/\s+$/, "");
+        return { link: false, value: val };
+      })
+      .filter((part) => part.link || part.value.length > 0);
+    const hasVisibleText = cleaned.some((part) => part.link || part.value.trim().length > 0);
+    const trimmed = body.trim();
+    const emoji = Boolean(EMOJI_ONLY?.test(trimmed)) && Array.from(trimmed).length <= 12 && !reply && !forwarded;
+    return { visibleParts: cleaned, hasVisibleText, embeds, emoji };
+  }, [body, reply, forwarded]);
+
+  if (emoji) {
+    return (
+      <>
+        <span className="text-[42px] leading-tight">{body.trim()}</span>
+        <span className="px-1">
+          <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone="peer" />
+        </span>
+      </>
+    );
+  }
+
+  const hasEmbed = embeds.length > 0;
+  const embedOnly = hasEmbed && !hasVisibleText && !reply && !forwarded;
+  const metaPadWidth = (mine ? 56 : 38) + (starred ? 14 : 0) + (pinned ? 14 : 0);
+
+  return (
+    <div
+      className={cx(
+        "relative max-w-full rounded-[20px] text-[15px] leading-[1.4]",
+        embedOnly ? "p-1.5" : "px-3 py-2",
+        mine ? "border border-[#3d3128] bg-own text-own-ink" : "border border-line bg-peer text-peer-ink",
+        tail && (mine ? "rounded-br-md" : "rounded-bl-md"),
+      )}
+    >
+      {forwarded ? <ForwardedTag inOwnBubble={mine} /> : null}
+      {reply ? (
+        <ReplyQuote reply={reply} meId={meId} peerName={peerName} inOwnBubble={mine} onJump={onJump} />
+      ) : null}
+      <div className={cx("flex flex-col gap-1.5", hasEmbed && hasVisibleText && "mb-1.5")}>
+        {embeds.map((e) =>
+          e.kind === "image" ? (
+            <LinkImage key={e.url} src={e.src} auto={autoEmbeds} onImage={onImage} />
+          ) : (
+            <EmbedCard
+              key={e.url}
+              embed={e}
+              auto={autoEmbeds}
+              dark={dark}
+              inOwnBubble={mine}
+              onImage={onImage}
+            />
+          ),
+        )}
+      </div>
+      {hasVisibleText ? (
+        <>
+          <span className="whitespace-pre-wrap [overflow-wrap:anywhere] text-[14px]">
+            {visibleParts.map((part, i) =>
+              part.link ? (
+                <a
+                  key={i}
+                  href={part.value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className={cx(
+                    "underline decoration-1 underline-offset-2",
+                    mine ? "text-own-accent" : "text-accent",
+                  )}
+                >
+                  {part.value}
+                </a>
+              ) : (
+                <span key={i}>{part.value}</span>
+              ),
+            )}
+          </span>
+          <span className="inline-block h-3" style={{ width: metaPadWidth }} aria-hidden />
+          <span className="absolute bottom-2 right-3">
+            <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+          </span>
+        </>
+      ) : (
+        <div className="mt-1 flex justify-end px-1.5 pb-0.5">
+          <Meta m={m} receipt={receipt} starred={starred} pinned={pinned} tone={mine ? "own" : "peer"} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReactionBadge({
+  reactions,
+  meId,
+  mine,
+  onReact,
+}: {
+  reactions: Record<string, string>;
+  meId: string;
+  mine: boolean;
+  onReact: (emoji: string) => void;
+}) {
+  const entries = Object.entries(reactions).filter(([, e]) => Boolean(e));
+  if (!entries.length) return null;
+  const counts = new Map<string, number>();
+  for (const [, emoji] of entries) counts.set(emoji, (counts.get(emoji) ?? 0) + 1);
+  const myEmoji = reactions[meId];
+
+  return (
+    <div className={cx("-mt-1.5 z-10 flex flex-wrap items-center gap-1 px-1", mine ? "justify-end" : "justify-start")}>
+      {Array.from(counts.entries()).map(([emoji, count]) => {
+        const isMine = myEmoji === emoji;
+        return (
+          <button
+            key={emoji}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReact(emoji);
+            }}
+            aria-label={`${emoji} ifadesi`}
+            className={cx(
+              "flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs shadow-xs transition-transform active:scale-95",
+              isMine
+                ? "border-accent bg-accent-soft text-ink font-semibold"
+                : "border-line bg-raised text-ink hover:bg-sunken",
+            )}
+          >
+            <span>{emoji}</span>
+            {count > 1 ? <span className="text-[11px] tabular-nums">{count}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+type MenuAnchor = {
+  x: number;
+  top: number;
+  bottom: number;
+};
+
+function computeMenuCoords(
+  anchor: MenuAnchor,
+  mine: boolean,
+  menuW: number,
+  menuH: number,
+): { left: number; top: number } {
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1024;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 768;
+  const topReserve = 66;
+  const bottomReserve = 86;
+  const maxTop = Math.max(topReserve, vh - menuH - bottomReserve);
+
+  let top: number;
+  if (anchor.bottom + 6 + menuH <= vh - bottomReserve) {
+    top = Math.max(topReserve, Math.min(anchor.bottom + 6, maxTop));
+  } else {
+    top = Math.max(topReserve, Math.min(anchor.top - menuH - 6, maxTop));
+  }
+
+  const rawLeft = mine ? anchor.x - menuW : anchor.x;
+  const left = Math.round(Math.max(12, Math.min(rawLeft, Math.max(12, vw - menuW - 12))));
+  return { left, top: Math.round(top) };
+}
+
+function ContextMenu({
+  anchor,
+  mine,
+  myReaction,
+  starred,
+  pinned,
+  canReply,
+  canCopy,
+  canForward,
+  onClose,
+  onReact,
+  onReply,
+  onCopy,
+  onForward,
+  onTogglePin,
+  onToggleStar,
+  onSelect,
+  onDelete,
+}: {
+  anchor: MenuAnchor | null;
+  mine: boolean;
+  myReaction: string;
+  starred: boolean;
+  pinned: boolean;
+  canReply: boolean;
+  canCopy: boolean;
+  canForward: boolean;
+  onClose: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onCopy: () => void;
+  onForward: () => void;
+  onTogglePin: () => void;
+  onToggleStar: () => void;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!anchor) {
+      setCoords(null);
+      return;
+    }
+    const el = ref.current;
+    const w = el?.offsetWidth || 216;
+    const h = el?.offsetHeight || (canReply ? 345 : 130);
+    setCoords(computeMenuCoords(anchor, mine, w, h));
+  }, [anchor, mine, canReply]);
+
+  useEffect(() => {
+    if (!anchor) return;
+    const onDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onCloseRef.current();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    const onScroll = () => onCloseRef.current();
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [anchor]);
+
+  if (!anchor) return null;
+
+  const fallback = computeMenuCoords(anchor, mine, 216, canReply ? 345 : 130);
+  const pos = coords ?? fallback;
+
+  const item =
+    "flex min-h-9 w-full items-center gap-3 rounded-xl px-3 py-1.5 text-left text-[13.5px] font-medium transition-colors hover:bg-sunken";
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      style={{ left: pos.left, top: pos.top }}
+      onClick={(e) => e.stopPropagation()}
+      className={cx("rise fixed z-[90] flex flex-col gap-1.5", mine ? "items-end" : "items-start")}
+    >
+      {canReply ? (
+        <div className="flex items-center gap-0.5 rounded-full border border-line bg-raised px-2 py-1 shadow-xl">
+          {QUICK_EMOJIS.map((emoji) => {
+            const active = myReaction === emoji;
+            return (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={`${emoji} ifadesi bırak`}
+                onClick={() => {
+                  onClose();
+                  onReact(emoji);
+                }}
+                className={cx(
+                  "flex h-8 w-8 items-center justify-center rounded-full text-[19px] transition-transform hover:scale-125",
+                  active && "bg-accent-soft ring-1 ring-accent",
+                )}
+              >
+                {emoji}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="min-w-48 overflow-hidden rounded-2xl border border-line bg-raised p-1.5 shadow-xl">
+        {canReply ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              onReply();
+            }}
+          >
+            <Reply size={15} aria-hidden />
+            Cevapla
+          </button>
+        ) : null}
+
+        {canCopy ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              onCopy();
+            }}
+          >
+            <Copy size={15} aria-hidden />
+            Kopyala
+          </button>
+        ) : null}
+
+        {canForward ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              onForward();
+            }}
+          >
+            <CornerUpRight size={15} aria-hidden />
+            İlet
+          </button>
+        ) : null}
+
+        {canReply ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              onTogglePin();
+            }}
+          >
+            {pinned ? <PinOff size={15} aria-hidden /> : <Pin size={15} aria-hidden />}
+            {pinned ? "Sabitlemeyi kaldır" : "Sabitle"}
+          </button>
+        ) : null}
+
+        {canReply ? (
+          <button
+            type="button"
+            role="menuitem"
+            className={item}
+            onClick={() => {
+              onClose();
+              onToggleStar();
+            }}
+          >
+            <Star size={15} className={starred ? "fill-current text-accent" : ""} aria-hidden />
+            {starred ? "Yıldızı kaldır" : "Yıldız ekle"}
+          </button>
+        ) : null}
+
+        <button
+          type="button"
+          role="menuitem"
+          className={item}
+          onClick={() => {
+            onClose();
+            onSelect();
+          }}
+        >
+          <SquareCheck size={15} aria-hidden />
+          Mesaj seç
+        </button>
+
+        <div className="my-1 border-t border-line" />
+
+        <button
+          type="button"
+          role="menuitem"
+          className={cx(item, "text-danger")}
+          onClick={() => {
+            onClose();
+            onDelete();
+          }}
+        >
+          <Trash2 size={15} aria-hidden />
+          Sil
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export const MessageRow = memo(function MessageRow({
+  m,
+  convId,
+  meId,
+  peerName,
+  mine,
+  head,
+  tail,
+  receipt,
+  seenLabel,
+  starred,
+  pinned,
+  selectMode,
+  selected,
+  autoEmbeds,
+  dark,
+  onToggleSelect,
+  onStartSelect,
+  onReply,
+  onReact,
+  onForward,
+  onToggleStar,
+  onTogglePin,
+  onPromptDelete,
+  onCopyText,
+  onJump,
+  onRetry,
+  onDiscard,
+  onImage,
+}: RowProps) {
+  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
+  const touchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeMenu = useCallback(() => setMenuAnchor(null), []);
+
+  const p = m.payload;
+  const copyableText =
+    !m.deleted && p
+      ? p.t === "text"
+        ? p.body
+        : p.t === "gif"
+          ? p.url
+          : null
+      : null;
+  const canReply = !m.deleted && Boolean(p) && !m.state;
+  const canForward = !m.deleted && Boolean(p) && !m.state && p?.t !== "react";
+  const myReaction = m.reactions?.[meId] ?? "";
+
+  const handleContextMenu = (e: ReactMouseEvent) => {
+    if (selectMode) return;
+    e.preventDefault();
+    setMenuAnchor({ x: e.clientX, top: e.clientY, bottom: e.clientY });
+  };
+
+  const handleTouchStart = (e: ReactTouchEvent) => {
+    if (selectMode) return;
+    const t = e.touches[0];
+    const x = t ? t.clientX : window.innerWidth / 2;
+    const y = t ? t.clientY : window.innerHeight / 2;
+    if (touchTimer.current) clearTimeout(touchTimer.current);
+    touchTimer.current = setTimeout(() => {
+      setMenuAnchor({ x, top: y, bottom: y });
+    }, 450);
+  };
+
+  const toggleMenuFromButton = (e: ReactMouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setMenuAnchor((prev) =>
+      prev ? null : { x: mine ? rect.right : rect.left, top: rect.top, bottom: rect.bottom },
+    );
+  };
+
+  const clearTouch = () => {
+    if (touchTimer.current) {
+      clearTimeout(touchTimer.current);
+      touchTimer.current = null;
+    }
+  };
+
+  let content: ReactNode;
+  if (m.deleted) {
+    content = (
+      <p className="flex items-center gap-2 rounded-[20px] border border-dashed border-line px-3.5 py-2 text-sm italic text-muted">
+        <Ban size={14} aria-hidden />
+        {mine ? "Bu mesajı sildin" : "Bu mesaj silindi"}
+        <span className="not-italic">
+          <Meta m={m} receipt={null} tone="peer" />
+        </span>
+      </p>
+    );
+  } else if (!p || p.t === "react") {
+    content = (
+      <p className="flex items-center gap-2 rounded-[20px] border border-dashed border-line px-3.5 py-2 text-sm text-muted">
+        <LockKeyhole size={14} aria-hidden />
+        Bu mesajın şifresi bu cihazda çözülemedi
+      </p>
+    );
+  } else if (p.t === "text") {
+    content = (
+      <TextBlock
+        m={m}
+        body={p.body}
+        reply={p.reply}
+        forwarded={p.forwarded}
+        meId={meId}
+        peerName={peerName}
+        mine={mine}
+        tail={tail}
+        receipt={receipt}
+        starred={starred}
+        pinned={pinned}
+        autoEmbeds={autoEmbeds}
+        dark={dark}
+        onJump={onJump}
+        onImage={onImage}
+      />
+    );
+  } else if (p.t === "image") {
+    content = (
+      <>
+        {p.forwarded ? <ForwardedTag inOwnBubble={false} /> : null}
+        {p.reply ? (
+          <ReplyQuote reply={p.reply} meId={meId} peerName={peerName} inOwnBubble={false} onJump={onJump} />
+        ) : null}
+        <ImageBlock m={m} p={p} receipt={receipt} starred={starred} pinned={pinned} onImage={onImage} />
+      </>
+    );
+  } else {
+    content = (
+      <>
+        {p.forwarded ? <ForwardedTag inOwnBubble={false} /> : null}
+        {p.reply ? (
+          <ReplyQuote reply={p.reply} meId={meId} peerName={peerName} inOwnBubble={false} onJump={onJump} />
+        ) : null}
+        <GifBlock m={m} p={p} receipt={receipt} starred={starred} pinned={pinned} auto={autoEmbeds} />
+      </>
+    );
+  }
+
+  return (
+    <div
+      data-msg-id={m.id}
+      onContextMenu={handleContextMenu}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={clearTouch}
+      onTouchMove={clearTouch}
+      onClick={selectMode ? () => onToggleSelect(m.id) : undefined}
+      onDoubleClick={!selectMode && canReply ? () => onReply(m) : undefined}
+      className={cx(
+        "group flex w-full items-center gap-2.5 rounded-2xl px-3 py-0.5 transition-colors duration-300 md:px-6",
+        selectMode && "cursor-pointer select-none hover:bg-sunken/50",
+        selected && "bg-accent-soft/65",
+        head ? "mt-2.5" : "mt-[2px]",
+      )}
+    >
+      {selectMode ? (
+        <span
+          role="checkbox"
+          aria-checked={selected}
+          className={cx(
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+            selected ? "border-accent bg-accent text-accent-ink" : "border-line bg-raised",
+          )}
+        >
+          {selected ? <Check size={13} strokeWidth={3} /> : null}
+        </span>
+      ) : null}
+
+      <div className={cx("flex min-w-0 flex-1", mine ? "justify-end" : "justify-start")}>
+        <div
+          className={cx(
+            "relative flex min-w-0 max-w-[90%] flex-col md:max-w-[min(76%,560px)]",
+            mine ? "items-end" : "items-start",
+          )}
+        >
+          <div className={cx("relative flex max-w-full items-center gap-1", mine ? "flex-row-reverse" : "flex-row")}>
+            <div className={cx("rise flex min-w-0 max-w-full flex-col", mine ? "items-end" : "items-start")}>
+              {content}
+              {m.reactions && Object.keys(m.reactions).length > 0 ? (
+                <ReactionBadge
+                  reactions={m.reactions}
+                  meId={meId}
+                  mine={mine}
+                  onReact={(emoji) => onReact(m.id, emoji)}
+                />
+              ) : null}
+            </div>
+
+            {!selectMode ? (
+              <div className="relative flex shrink-0 items-center gap-0.5 self-center">
+                {canReply ? (
+                  <button
+                    type="button"
+                    aria-label="Yanıtla"
+                    onClick={() => onReply(m)}
+                    className={cx(
+                      "flex h-7 w-7 items-center justify-center rounded-full text-muted transition-opacity hover:bg-sunken hover:text-ink focus-visible:opacity-100",
+                      menuAnchor ? "opacity-100" : "opacity-0 group-hover:opacity-100 pointer-coarse:opacity-60",
+                    )}
+                  >
+                    <Reply size={15} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Mesaj seçenekleri"
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(menuAnchor)}
+                  onClick={toggleMenuFromButton}
+                  className={cx(
+                    "flex h-7 w-7 items-center justify-center rounded-full text-muted transition-opacity hover:bg-sunken hover:text-ink focus-visible:opacity-100",
+                    menuAnchor ? "opacity-100 bg-sunken text-ink" : "opacity-0 group-hover:opacity-100 pointer-coarse:opacity-60",
+                  )}
+                >
+                  <Ellipsis size={16} />
+                </button>
+
+                <ContextMenu
+                  anchor={menuAnchor}
+                  mine={mine}
+                  myReaction={myReaction}
+                  starred={starred}
+                  pinned={pinned}
+                  canReply={canReply}
+                  canCopy={copyableText !== null}
+                  canForward={canForward}
+                  onClose={closeMenu}
+                  onReact={(emoji) => onReact(m.id, emoji)}
+                  onReply={() => onReply(m)}
+                  onCopy={() => {
+                    if (copyableText !== null) onCopyText(copyableText);
+                  }}
+                  onForward={() => onForward(m)}
+                  onTogglePin={() => onTogglePin(m.id)}
+                  onToggleStar={() => onToggleStar(m.id)}
+                  onSelect={() => onStartSelect(m.id)}
+                  onDelete={() => onPromptDelete([m.id])}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {m.state === "failed" ? (
+            <p role="alert" className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-xs text-danger">
+              <span>{m.error ?? "Gönderilemedi."}</span>
+              <button
+                type="button"
+                className="font-semibold underline underline-offset-2"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetry(m.id);
+                }}
+              >
+                Tekrar dene
+              </button>
+              <button
+                type="button"
+                className="font-semibold text-muted underline underline-offset-2"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDiscard(convId, m.id);
+                }}
+              >
+                Vazgeç
+              </button>
+            </p>
+          ) : null}
+          {seenLabel ? <span className="mt-1 text-[11px] font-medium text-muted">Görüldü</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+});

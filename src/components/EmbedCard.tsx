@@ -1,0 +1,351 @@
+"use client";
+
+import { ExternalLink, LoaderCircle, Play } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { EMBED_DOMAIN, EMBED_NAME, embedFrame, type Embed } from "@/lib/embeds";
+import { cx } from "@/lib/format";
+import { loadProxiedVideo, resolveSocial, type ResolvedSocial } from "@/lib/media";
+
+export type FrameEmbed = Exclude<Embed, { kind: "image" }>;
+
+const DOT: Record<FrameEmbed["kind"], string> = {
+  tiktok: "#fe2c55",
+  instagram: "#d62976",
+  x: "#ede8df",
+  youtube: "#ff0033",
+  spotify: "#1db954",
+};
+
+function formatDuration(sec: number | null | undefined): string | null {
+  if (typeof sec !== "number" || !Number.isFinite(sec) || sec <= 0) return null;
+  const s = Math.round(sec);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/**
+ * Dark-themed social media card inside the message bubble.
+ * Renders Instagram, TikTok, and X natively (using server-resolved thumbnails,
+ * multi-image grids, and proxied MP4 video streams) and YouTube widescreen (16:9).
+ */
+export const EmbedCard = memo(function EmbedCard({
+  embed,
+  auto,
+  dark,
+  onImage,
+}: {
+  embed: FrameEmbed;
+  auto: boolean;
+  dark: boolean;
+  inOwnBubble?: boolean;
+  onImage?: (src: string) => void;
+}) {
+  const [armed, setArmed] = useState(auto);
+  const [meta, setMeta] = useState<ResolvedSocial | null>(null);
+  const [loadingMeta, setLoadingMeta] = useState(auto);
+  const [playing, setPlaying] = useState(false);
+  const [videoSrc, setVideoSrc] = useState<string | null>(null);
+  const [loadingVideo, setLoadingVideo] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  const name = EMBED_NAME[embed.kind];
+  const domain = meta?.siteName ?? EMBED_DOMAIN[embed.kind];
+  const isWideYouTube = embed.kind === "youtube" && !embed.short;
+  const cardWidthClass = isWideYouTube ? "w-[440px] max-w-full" : "w-[340px] max-w-full";
+
+  useEffect(() => {
+    if (auto) setArmed(true);
+  }, [auto]);
+
+  useEffect(() => {
+    if (!armed) return;
+    let live = true;
+    setLoadingMeta(true);
+    resolveSocial(embed.url)
+      .then((r) => {
+        if (!live) return;
+        setMeta(r);
+      })
+      .finally(() => {
+        if (live) setLoadingMeta(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [armed, embed.url]);
+
+  const canUseIframe = embed.kind === "youtube" || embed.kind === "spotify";
+  const frameBox = canUseIframe ? embedFrame(embed, dark) : null;
+  const durationLabel = formatDuration(meta?.duration);
+  const gallery = meta?.imagesDataUrls && meta.imagesDataUrls.length > 1 ? meta.imagesDataUrls : null;
+
+  const startPlayback = () => {
+    if (meta?.photo && meta.thumbDataUrl && !meta.videoUrl && onImage) {
+      onImage(meta.thumbDataUrl);
+      return;
+    }
+    setPlaying(true);
+    if (meta?.videoUrl && !videoSrc && !loadingVideo) {
+      setLoadingVideo(true);
+      setVideoFailed(false);
+      loadProxiedVideo(meta.videoUrl)
+        .then((blobUrl) => {
+          setVideoSrc(blobUrl);
+        })
+        .catch(() => {
+          setVideoFailed(true);
+        })
+        .finally(() => {
+          setLoadingVideo(false);
+        });
+    }
+  };
+
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setArmed(true);
+        }}
+        className={cx(
+          "flex items-center gap-3 rounded-xl border border-[#2e2b27] bg-[#161513] px-3.5 py-3 text-left text-[#ede8df] transition-colors hover:bg-[#1e1c19]",
+          cardWidthClass,
+        )}
+      >
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink">
+          <Play size={16} className="ml-0.5 fill-current" aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-semibold">{name} önizlemesini göster</span>
+          <span className="block truncate text-[11px] text-[#a59e92]">{domain}</span>
+        </span>
+      </button>
+    );
+  }
+
+  let mediaArea = null;
+  if (loadingMeta && !meta) {
+    mediaArea = (
+      <div
+        className={cx("skeleton w-full", isWideYouTube ? "aspect-video" : "h-[260px]")}
+        aria-label="Önizleme yükleniyor"
+      />
+    );
+  } else if (playing) {
+    if (meta?.videoUrl && !videoFailed) {
+      mediaArea = videoSrc ? (
+        <video
+          src={videoSrc}
+          controls
+          autoPlay
+          playsInline
+          onClick={(e) => e.stopPropagation()}
+          className="block max-h-[420px] w-full bg-black object-contain"
+        />
+      ) : (
+        <div className="relative flex h-[290px] w-full items-center justify-center bg-black text-white">
+          {meta.thumbDataUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={meta.thumbDataUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover opacity-40"
+            />
+          ) : null}
+          <span className="relative flex items-center gap-2 rounded-full bg-black/75 px-3.5 py-2 text-xs font-medium">
+            <LoaderCircle size={15} className="animate-spin" aria-hidden />
+            Video açılıyor…
+          </span>
+        </div>
+      );
+    } else if (frameBox) {
+      mediaArea = (
+        <iframe
+          src={frameBox.src}
+          title={`${name} içeriği`}
+          loading="lazy"
+          scrolling="no"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; fullscreen; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          referrerPolicy="strict-origin-when-cross-origin"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"
+          className={cx(
+            "block w-full overflow-hidden border-0 bg-black",
+            isWideYouTube && "aspect-video",
+          )}
+          style={
+            isWideYouTube
+              ? { colorScheme: "dark" }
+              : frameBox.ratio
+                ? { aspectRatio: frameBox.ratio, maxHeight: 420, colorScheme: "dark" }
+                : { height: Math.min(340, frameBox.height ?? 260), colorScheme: "dark" }
+          }
+        />
+      );
+    } else {
+      mediaArea = (
+        <div className="flex h-[200px] w-full flex-col items-center justify-center gap-2 bg-[#121110] px-4 text-center text-xs text-[#ede8df]">
+          <span>Bu video doğrudan oynatılamadı.</span>
+          <a
+            href={embed.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 rounded-full bg-[#ede8df] px-3 py-1.5 font-semibold text-[#121110]"
+          >
+            {name}’da aç
+            <ExternalLink size={12} aria-hidden />
+          </a>
+        </div>
+      );
+    }
+  } else if (gallery) {
+    mediaArea = (
+      <div className="grid grid-cols-2 gap-0.5 bg-[#0c0b0a]">
+        {gallery.slice(0, 4).map((src, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onImage?.(src);
+            }}
+            className={cx(
+              "group/img relative overflow-hidden bg-black",
+              gallery.length === 2
+                ? "h-[180px]"
+                : gallery.length === 3 && idx === 0
+                  ? "col-span-2 h-[155px]"
+                  : "h-[145px]",
+            )}
+            aria-label="Görseli büyüt"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt=""
+              className="h-full w-full object-cover transition-transform duration-200 group-hover/img:scale-105"
+              draggable={false}
+            />
+          </button>
+        ))}
+      </div>
+    );
+  } else if (meta?.thumbDataUrl) {
+    const isPlayable = Boolean(meta.videoUrl) || canUseIframe;
+    mediaArea = (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (isPlayable) startPlayback();
+          else if (onImage && meta.thumbDataUrl) onImage(meta.thumbDataUrl);
+          else window.open(embed.url, "_blank", "noopener,noreferrer");
+        }}
+        className={cx(
+          "group/play relative block w-full overflow-hidden bg-black text-left",
+          isWideYouTube
+            ? "aspect-video"
+            : embed.kind === "x" && !isPlayable
+              ? "max-h-[340px] min-h-[210px]"
+              : "h-[290px]",
+        )}
+        aria-label={isPlayable ? `${name} videosunu oynat` : `${name} görselini büyüt`}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={meta.thumbDataUrl}
+          alt={meta.title ?? name}
+          className="h-full w-full object-cover transition-transform duration-300 group-hover/play:scale-[1.02]"
+          draggable={false}
+        />
+        <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/15" />
+        {isPlayable ? (
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 text-white shadow-lg backdrop-blur-xs transition-transform group-hover/play:scale-105">
+              <Play size={22} className="ml-0.5 fill-white" aria-hidden />
+            </span>
+          </span>
+        ) : null}
+        {durationLabel ? (
+          <span className="pointer-events-none absolute bottom-2.5 left-2.5 rounded-md bg-black/70 px-2 py-0.5 text-[11px] font-medium tabular-nums text-white">
+            {durationLabel}
+          </span>
+        ) : null}
+      </button>
+    );
+  } else if (canUseIframe && frameBox && embed.kind === "spotify") {
+    mediaArea = (
+      <iframe
+        src={frameBox.src}
+        title={`${name} içeriği`}
+        loading="lazy"
+        scrolling="no"
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+        referrerPolicy="strict-origin-when-cross-origin"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"
+        className="block w-full overflow-hidden border-0 bg-black"
+        style={{ height: 152, colorScheme: "dark" }}
+      />
+    );
+  } else if (meta?.videoUrl || canUseIframe) {
+    mediaArea = (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          startPlayback();
+        }}
+        className={cx(
+          "flex w-full flex-col items-center justify-center gap-2 bg-[#11100f] px-4 text-center text-[#ede8df]",
+          isWideYouTube ? "aspect-video" : "h-[200px]",
+        )}
+      >
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/12 text-white">
+          <Play size={20} className="ml-0.5 fill-white" aria-hidden />
+        </span>
+        <span className="text-xs font-semibold">{name} videosunu oynat</span>
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={cx(
+        "overflow-hidden rounded-xl border border-[#2e2b27] bg-[#161513] text-left text-[#ede8df] shadow-sm",
+        cardWidthClass,
+      )}
+    >
+      {mediaArea}
+      <div className="px-3 py-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-[13.5px] font-semibold leading-snug text-[#ede8df]">
+            {meta?.title ?? name}
+          </p>
+          <a
+            href={embed.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`${name} uygulamasında aç`}
+            className="shrink-0 text-[#a59e92] transition-colors hover:text-[#ede8df]"
+          >
+            <ExternalLink size={13} />
+          </a>
+        </div>
+        {meta?.description ? (
+          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-[#b5aea2]">
+            {meta.description}
+          </p>
+        ) : null}
+        <p className="mt-1.5 flex items-center gap-1.5 truncate text-[11px] text-[#8d867b]">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: DOT[embed.kind] }} aria-hidden />
+          <span className="truncate">{domain}</span>
+        </p>
+      </div>
+    </div>
+  );
+});
