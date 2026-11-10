@@ -214,6 +214,8 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
     typeof window !== "undefined" &&
     !android &&
     (Boolean((window as unknown as { Capacitor?: unknown }).Capacitor) || /\bwv\b/i.test(navigator.userAgent));
+  const isApp = Boolean(android || isLegacyApk);
+
   const rawVer = android?.getVersionName?.() || (isLegacyApk ? "1.0.1" : "1.0.3");
   const currentVersion = rawVer.startsWith("v") ? rawVer : `v${rawVer}`;
 
@@ -223,7 +225,7 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
   const [apkProgress, setApkProgress] = useState<ApkProgressState>({ status: "idle", percent: 0 });
 
   const checkUpdates = async (manual = false) => {
-    if (checking) return;
+    if (!isApp || checking) return;
     setChecking(true);
     try {
       const res = await fetch("https://api.github.com/repos/perfectusmim1/kuytu/releases/latest", {
@@ -258,11 +260,13 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
   };
 
   useEffect(() => {
+    if (!isApp) return;
     void checkUpdates(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isApp]);
 
   useEffect(() => {
+    if (!isApp) return;
     const onProgress = (e: Event) => {
       const detail = (e as CustomEvent<ApkProgressState>).detail;
       if (!detail) return;
@@ -277,7 +281,9 @@ function AppUpdateSection({ onToast }: { onToast: (message: string) => void }) {
     };
     window.addEventListener("kuytu:apk-progress", onProgress);
     return () => window.removeEventListener("kuytu:apk-progress", onProgress);
-  }, [onToast]);
+  }, [isApp, onToast]);
+
+  if (!isApp) return null;
 
   const hasUpdate = Boolean(latestTag && latestTag !== currentVersion);
   const targetApkUrl = apkUrl || "https://github.com/perfectusmim1/kuytu/releases/latest/download/kuytu.apk";

@@ -27,10 +27,12 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
   icons: {
     icon: [
-      { url: "/logo.png", type: "image/png", sizes: "256x256" },
-      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico?v=3", sizes: "any" },
+      { url: "/logo.png?v=3", type: "image/png", sizes: "256x256" },
+      { url: "/icon.svg?v=3", type: "image/svg+xml" },
     ],
-    apple: [{ url: "/icon-192.png", type: "image/png", sizes: "192x192" }],
+    shortcut: "/favicon.ico?v=3",
+    apple: [{ url: "/icon-192.png?v=3", type: "image/png", sizes: "192x192" }],
   },
 };
 
